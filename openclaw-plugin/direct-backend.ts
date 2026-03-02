@@ -80,6 +80,7 @@ function clamp(value: number, min: number, max: number): number {
 export class DirectBackend implements MemoryBackend {
   private conn: Connection;
   private embedder: Embedder | null;
+  private autoEmbedModel: string | null;
   private initialized: Promise<void>;
 
   constructor(
@@ -87,12 +88,16 @@ export class DirectBackend implements MemoryBackend {
     username: string,
     password: string,
     database: string,
-    embedder: Embedder | null
+    embedder: Embedder | null,
+    autoEmbedModel?: string
   ) {
     this.conn = connect({ host, username, password, database });
     this.embedder = embedder;
-    const dims = embedder?.dims ?? 1536;
-    this.initialized = initSchema(this.conn, dims).catch(() => {
+    this.autoEmbedModel = autoEmbedModel ?? null;
+    const dims = autoEmbedModel
+      ? 1024
+      : (embedder?.dims ?? 1536);
+    this.initialized = initSchema(this.conn, dims, autoEmbedModel).catch(() => {
       // Schema init failed — table may already exist. Continue.
     });
   }
@@ -102,25 +107,43 @@ export class DirectBackend implements MemoryBackend {
     this.validateContent(input.content);
 
     const id = generateId();
-    const embedding = this.embedder
-      ? await this.embedder.embed(input.content)
-      : null;
 
-    await this.conn.execute(
-      `INSERT INTO memories (id, space_id, content, key_name, source, tags, metadata, embedding, version, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-      [
-        id,
-        SPACE_ID,
-        input.content,
-        input.key ?? null,
-        input.source ?? null,
-        input.tags ? JSON.stringify(input.tags) : null,
-        input.metadata ? JSON.stringify(input.metadata) : null,
-        embedding ? vecToString(embedding) : null,
-        input.source ?? null,
-      ]
-    );
+    if (this.autoEmbedModel) {
+      await this.conn.execute(
+        `INSERT INTO memories (id, space_id, content, key_name, source, tags, metadata, version, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        [
+          id,
+          SPACE_ID,
+          input.content,
+          input.key ?? null,
+          input.source ?? null,
+          input.tags ? JSON.stringify(input.tags) : null,
+          input.metadata ? JSON.stringify(input.metadata) : null,
+          input.source ?? null,
+        ]
+      );
+    } else {
+      const embedding = this.embedder
+        ? await this.embedder.embed(input.content)
+        : null;
+
+      await this.conn.execute(
+        `INSERT INTO memories (id, space_id, content, key_name, source, tags, metadata, embedding, version, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+        [
+          id,
+          SPACE_ID,
+          input.content,
+          input.key ?? null,
+          input.source ?? null,
+          input.tags ? JSON.stringify(input.tags) : null,
+          input.metadata ? JSON.stringify(input.metadata) : null,
+          embedding ? vecToString(embedding) : null,
+          input.source ?? null,
+        ]
+      );
+    }
 
     const rows = (await this.conn.execute(
       "SELECT * FROM memories WHERE id = ?",
@@ -134,6 +157,9 @@ export class DirectBackend implements MemoryBackend {
     const limit = clamp(input.limit ?? 20, 1, 200);
     const offset = Math.max(input.offset ?? 0, 0);
 
+    if (input.q && this.autoEmbedModel) {
+      return this.autoHybridSearch(input.q, input, limit, offset);
+    }
     if (input.q && this.embedder) {
       return this.hybridSearch(input.q, input, limit, offset);
     }
@@ -165,8 +191,7 @@ export class DirectBackend implements MemoryBackend {
       sets.push("content = ?");
       values.push(input.content);
 
-      // Re-generate embedding only if content changed.
-      if (this.embedder) {
+      if (!this.autoEmbedModel && this.embedder) {
         const embedding = await this.embedder.embed(input.content);
         sets.push("embedding = ?");
         values.push(vecToString(embedding));
@@ -266,6 +291,78 @@ export class DirectBackend implements MemoryBackend {
     return {
       data: rows.map((r) => formatMemory(r)),
       total,
+      limit,
+      offset,
+    };
+  }
+
+  private async autoHybridSearch(
+    q: string,
+    input: SearchInput,
+    limit: number,
+    offset: number
+  ): Promise<SearchResult> {
+    const filterConditions: string[] = ["space_id = ?"];
+    const filterValues: unknown[] = [SPACE_ID];
+
+    if (input.source) {
+      filterConditions.push("source = ?");
+      filterValues.push(input.source);
+    }
+    if (input.key) {
+      filterConditions.push("key_name = ?");
+      filterValues.push(input.key);
+    }
+    if (input.tags) {
+      for (const tag of input.tags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean)) {
+        filterConditions.push("JSON_CONTAINS(tags, ?)");
+        filterValues.push(JSON.stringify(tag));
+      }
+    }
+
+    const filterWhere = filterConditions.join(" AND ");
+    const fetchLimit = limit * 3;
+
+    const vecRows = (await this.conn.execute(
+      `SELECT *, VEC_EMBED_COSINE_DISTANCE(embedding, ?) AS distance
+       FROM memories
+       WHERE ${filterWhere} AND embedding IS NOT NULL
+       ORDER BY VEC_EMBED_COSINE_DISTANCE(embedding, ?)
+       LIMIT ?`,
+      [q, ...filterValues, q, fetchLimit]
+    )) as unknown as MemoryRow[];
+
+    const kwConditions = [
+      ...filterConditions,
+      "content LIKE CONCAT('%', ?, '%')",
+    ];
+    const kwRows = (await this.conn.execute(
+      `SELECT * FROM memories WHERE ${kwConditions.join(" AND ")} ORDER BY updated_at DESC LIMIT ?`,
+      [...filterValues, q, fetchLimit]
+    )) as unknown as MemoryRow[];
+
+    const byId = new Map<string, { row: MemoryRow; score: number }>();
+
+    for (const r of vecRows) {
+      const dist = parseFloat(r.distance ?? "1");
+      byId.set(r.id, { row: r, score: 1 - dist });
+    }
+    for (const r of kwRows) {
+      if (!byId.has(r.id)) {
+        byId.set(r.id, { row: r, score: 0.5 });
+      }
+    }
+
+    const merged = Array.from(byId.values())
+      .sort((a, b) => b.score - a.score)
+      .slice(offset, offset + limit);
+
+    return {
+      data: merged.map(({ row, score }) => formatMemory(row, score)),
+      total: byId.size,
       limit,
       offset,
     };

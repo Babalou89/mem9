@@ -13,11 +13,12 @@ import (
 )
 
 type MemoryRepo struct {
-	db *sql.DB
+	db        *sql.DB
+	autoModel string // non-empty = TiDB auto-embedding enabled
 }
 
-func NewMemoryRepo(db *sql.DB) *MemoryRepo {
-	return &MemoryRepo{db: db}
+func NewMemoryRepo(db *sql.DB, autoModel string) *MemoryRepo {
+	return &MemoryRepo{db: db, autoModel: autoModel}
 }
 
 // allColumns is the standard column list for SELECT queries.
@@ -25,6 +26,19 @@ const allColumns = `id, space_id, content, key_name, source, tags, metadata, emb
 
 func (r *MemoryRepo) Create(ctx context.Context, m *domain.Memory) error {
 	tagsJSON := marshalTags(m.Tags)
+	if r.autoModel != "" {
+		_, err := r.db.ExecContext(ctx,
+			`INSERT INTO memories (id, space_id, content, key_name, source, tags, metadata, version, updated_by, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+			m.ID, m.SpaceID, m.Content, nullString(m.KeyName), nullString(m.Source),
+			tagsJSON, nullJSON(m.Metadata),
+			m.Version, nullString(m.UpdatedBy),
+		)
+		if err != nil {
+			return fmt.Errorf("create memory: %w", err)
+		}
+		return nil
+	}
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO memories (id, space_id, content, key_name, source, tags, metadata, embedding, version, updated_by, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
@@ -40,6 +54,27 @@ func (r *MemoryRepo) Create(ctx context.Context, m *domain.Memory) error {
 
 func (r *MemoryRepo) Upsert(ctx context.Context, m *domain.Memory) error {
 	tagsJSON := marshalTags(m.Tags)
+	if r.autoModel != "" {
+		_, err := r.db.ExecContext(ctx,
+			`INSERT INTO memories (id, space_id, content, key_name, source, tags, metadata, version, updated_by, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, NOW(), NOW())
+			 ON DUPLICATE KEY UPDATE
+			   content = VALUES(content),
+			   source = VALUES(source),
+			   tags = VALUES(tags),
+			   metadata = VALUES(metadata),
+			   version = version + 1,
+			   updated_by = VALUES(updated_by),
+			   updated_at = NOW()`,
+			m.ID, m.SpaceID, m.Content, nullString(m.KeyName), nullString(m.Source),
+			tagsJSON, nullJSON(m.Metadata),
+			nullString(m.UpdatedBy),
+		)
+		if err != nil {
+			return fmt.Errorf("upsert memory: %w", err)
+		}
+		return nil
+	}
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO memories (id, space_id, content, key_name, source, tags, metadata, embedding, version, updated_by, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, NOW(), NOW())
@@ -79,9 +114,17 @@ func (r *MemoryRepo) GetByKey(ctx context.Context, spaceID, keyName string) (*do
 func (r *MemoryRepo) UpdateOptimistic(ctx context.Context, m *domain.Memory, expectedVersion int) error {
 	tagsJSON := marshalTags(m.Tags)
 
-	query := `UPDATE memories SET content = ?, key_name = ?, tags = ?, metadata = ?, embedding = ?, version = version + 1, updated_by = ?, updated_at = NOW()
-		 WHERE id = ? AND space_id = ?`
-	args := []any{m.Content, nullString(m.KeyName), tagsJSON, nullJSON(m.Metadata), vecToString(m.Embedding), nullString(m.UpdatedBy), m.ID, m.SpaceID}
+	var query string
+	var args []any
+	if r.autoModel != "" {
+		query = `UPDATE memories SET content = ?, key_name = ?, tags = ?, metadata = ?, version = version + 1, updated_by = ?, updated_at = NOW()
+			 WHERE id = ? AND space_id = ?`
+		args = []any{m.Content, nullString(m.KeyName), tagsJSON, nullJSON(m.Metadata), nullString(m.UpdatedBy), m.ID, m.SpaceID}
+	} else {
+		query = `UPDATE memories SET content = ?, key_name = ?, tags = ?, metadata = ?, embedding = ?, version = version + 1, updated_by = ?, updated_at = NOW()
+			 WHERE id = ? AND space_id = ?`
+		args = []any{m.Content, nullString(m.KeyName), tagsJSON, nullJSON(m.Metadata), vecToString(m.Embedding), nullString(m.UpdatedBy), m.ID, m.SpaceID}
+	}
 
 	if expectedVersion > 0 {
 		query += " AND version = ?"
@@ -175,9 +218,16 @@ func (r *MemoryRepo) BulkCreate(ctx context.Context, memories []*domain.Memory) 
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO memories (id, space_id, content, key_name, source, tags, metadata, embedding, version, updated_by, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`)
+	var stmtSQL string
+	if r.autoModel != "" {
+		stmtSQL = `INSERT INTO memories (id, space_id, content, key_name, source, tags, metadata, version, updated_by, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`
+	} else {
+		stmtSQL = `INSERT INTO memories (id, space_id, content, key_name, source, tags, metadata, embedding, version, updated_by, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`
+	}
+
+	stmt, err := tx.PrepareContext(ctx, stmtSQL)
 	if err != nil {
 		return fmt.Errorf("prepare: %w", err)
 	}
@@ -185,16 +235,26 @@ func (r *MemoryRepo) BulkCreate(ctx context.Context, memories []*domain.Memory) 
 
 	for _, m := range memories {
 		tagsJSON := marshalTags(m.Tags)
-		if _, err := stmt.ExecContext(ctx,
-			m.ID, m.SpaceID, m.Content, nullString(m.KeyName), nullString(m.Source),
-			tagsJSON, nullJSON(m.Metadata), vecToString(m.Embedding),
-			m.Version, nullString(m.UpdatedBy),
-		); err != nil {
+		var execErr error
+		if r.autoModel != "" {
+			_, execErr = stmt.ExecContext(ctx,
+				m.ID, m.SpaceID, m.Content, nullString(m.KeyName), nullString(m.Source),
+				tagsJSON, nullJSON(m.Metadata),
+				m.Version, nullString(m.UpdatedBy),
+			)
+		} else {
+			_, execErr = stmt.ExecContext(ctx,
+				m.ID, m.SpaceID, m.Content, nullString(m.KeyName), nullString(m.Source),
+				tagsJSON, nullJSON(m.Metadata), vecToString(m.Embedding),
+				m.Version, nullString(m.UpdatedBy),
+			)
+		}
+		if execErr != nil {
 			var mysqlErr *mysql.MySQLError
-			if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			if errors.As(execErr, &mysqlErr) && mysqlErr.Number == 1062 {
 				return fmt.Errorf("bulk insert memory %s: %w", m.ID, domain.ErrDuplicateKey)
 			}
-			return fmt.Errorf("bulk insert memory %s: %w", m.ID, err)
+			return fmt.Errorf("bulk insert memory %s: %w", m.ID, execErr)
 		}
 	}
 	return tx.Commit()
@@ -228,6 +288,40 @@ func (r *MemoryRepo) VectorSearch(ctx context.Context, spaceID string, queryVec 
 	rows, err := r.db.QueryContext(ctx, query, fullArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("vector search: %w", err)
+	}
+	defer rows.Close()
+
+	var memories []domain.Memory
+	for rows.Next() {
+		m, err := scanMemoryRowsWithDistance(rows)
+		if err != nil {
+			return nil, err
+		}
+		memories = append(memories, *m)
+	}
+	return memories, rows.Err()
+}
+
+func (r *MemoryRepo) AutoVectorSearch(ctx context.Context, spaceID string, queryText string, f domain.MemoryFilter, limit int) ([]domain.Memory, error) {
+	conds, args := buildFilterConds(spaceID, f)
+	conds = append(conds, "embedding IS NOT NULL")
+
+	where := strings.Join(conds, " AND ")
+
+	query := `SELECT ` + allColumns + `, VEC_EMBED_COSINE_DISTANCE(embedding, ?) AS distance
+		 FROM memories
+		 WHERE ` + where + `
+		 ORDER BY VEC_EMBED_COSINE_DISTANCE(embedding, ?)
+		 LIMIT ?`
+
+	fullArgs := make([]any, 0, len(args)+3)
+	fullArgs = append(fullArgs, queryText)
+	fullArgs = append(fullArgs, args...)
+	fullArgs = append(fullArgs, queryText, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, fullArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("auto vector search: %w", err)
 	}
 	defer rows.Close()
 

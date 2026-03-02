@@ -1,13 +1,14 @@
 import type { Connection } from "@tidbcloud/serverless";
 
-/**
- * Auto-creates the memories table if it doesn't exist.
- * VECTOR column is nullable — works even without TiFlash.
- */
 export async function initSchema(
   conn: Connection,
-  dims: number = 1536
+  dims: number = 1536,
+  autoEmbedModel?: string
 ): Promise<void> {
+  const embeddingCol = autoEmbedModel
+    ? `embedding VECTOR(${dims}) GENERATED ALWAYS AS (EMBED_TEXT("${autoEmbedModel}", content)) STORED,`
+    : `embedding VECTOR(${dims}) NULL,`;
+
   await conn.execute(`
     CREATE TABLE IF NOT EXISTS memories (
       id          VARCHAR(36)       PRIMARY KEY,
@@ -17,7 +18,7 @@ export async function initSchema(
       source      VARCHAR(100),
       tags        JSON,
       metadata    JSON,
-      embedding   VECTOR(${dims})   NULL,
+      ${embeddingCol}
       version     INT               DEFAULT 1,
       updated_by  VARCHAR(100),
       created_at  TIMESTAMP         DEFAULT CURRENT_TIMESTAMP,
@@ -29,7 +30,6 @@ export async function initSchema(
     )
   `);
 
-  // Vector index requires TiFlash. Silent failure is fine — keyword search still works.
   try {
     await conn.execute(
       `ALTER TABLE memories ADD VECTOR INDEX idx_cosine ((VEC_COSINE_DISTANCE(embedding)))`

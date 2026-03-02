@@ -9,7 +9,12 @@ export interface PluginConfig {
   apiUrl?: string;
   apiToken?: string;
 
-  // Embedding provider (optional — omit for keyword-only search)
+  // Auto-embedding via TiDB EMBED_TEXT() — takes priority over client-side embedding.
+  // Example: "tidbcloud_free/amazon/titan-embed-text-v2"
+  autoEmbedModel?: string;
+  autoEmbedDims?: number;
+
+  // Client-side embedding provider (optional — omit for keyword-only search)
   embedding?: EmbedConfig;
 }
 

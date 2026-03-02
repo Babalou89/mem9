@@ -22,6 +22,14 @@
         "type": "string",
         "description": "Database name (direct mode, default: mnemos)"
       },
+      "autoEmbedModel": {
+        "type": "string",
+        "description": "TiDB auto-embedding model (e.g. tidbcloud_free/amazon/titan-embed-text-v2). Takes priority over client-side embedding."
+      },
+      "autoEmbedDims": {
+        "type": "number",
+        "description": "Auto-embedding vector dimensions (default: 1024)"
+      },
       "apiUrl": {
         "type": "string",
         "description": "mnemo-server URL (server mode)"

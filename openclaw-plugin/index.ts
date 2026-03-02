@@ -49,6 +49,17 @@ function createBackend(
       );
       return null;
     }
+    if (cfg.autoEmbedModel) {
+      logger.info(`[mnemo] Direct mode (auto-embedding: ${cfg.autoEmbedModel})`);
+      return new DirectBackend(
+        cfg.host,
+        cfg.username,
+        cfg.password,
+        cfg.database ?? "mnemos",
+        null,
+        cfg.autoEmbedModel
+      );
+    }
     const embedder = createEmbedder(cfg.embedding);
     const mode = embedder ? "hybrid search" : "keyword-only";
     logger.info(`[mnemo] Direct mode (${mode})`);

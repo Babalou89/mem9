@@ -29,3 +29,15 @@ CREATE TABLE IF NOT EXISTS memories (
 
 -- Vector index requires TiFlash. May fail on plain MySQL; safe to ignore.
 -- ALTER TABLE memories ADD VECTOR INDEX idx_cosine ((VEC_COSINE_DISTANCE(embedding)));
+
+-- Auto-embedding variant (TiDB Cloud Serverless only):
+-- Replace the embedding column above with a generated column:
+--
+--   embedding VECTOR(1024) GENERATED ALWAYS AS (
+--     EMBED_TEXT("tidbcloud_free/amazon/titan-embed-text-v2", content)
+--   ) STORED,
+--
+-- Then add vector index:
+--   VECTOR INDEX idx_cosine ((VEC_COSINE_DISTANCE(embedding)))
+--
+-- Set MNEMO_EMBED_AUTO_MODEL=tidbcloud_free/amazon/titan-embed-text-v2 to enable.

@@ -23,12 +23,13 @@ const (
 )
 
 type MemoryService struct {
-	memories repository.MemoryRepo
-	embedder *embed.Embedder // nil = keyword-only mode
+	memories  repository.MemoryRepo
+	embedder  *embed.Embedder // nil = no client-side embedding
+	autoModel string          // non-empty = TiDB auto-embedding
 }
 
-func NewMemoryService(memories repository.MemoryRepo, embedder *embed.Embedder) *MemoryService {
-	return &MemoryService{memories: memories, embedder: embedder}
+func NewMemoryService(memories repository.MemoryRepo, embedder *embed.Embedder, autoModel string) *MemoryService {
+	return &MemoryService{memories: memories, embedder: embedder, autoModel: autoModel}
 }
 
 // Create stores a new memory. If keyName is provided and already exists, it upserts
@@ -38,9 +39,8 @@ func (s *MemoryService) Create(ctx context.Context, spaceID, agentName, content,
 		return nil, err
 	}
 
-	// Generate embedding if provider is configured.
 	var embedding []float32
-	if s.embedder != nil {
+	if s.autoModel == "" && s.embedder != nil {
 		var err error
 		embedding, err = s.embedder.Embed(ctx, content)
 		if err != nil {
@@ -91,11 +91,12 @@ func (s *MemoryService) Get(ctx context.Context, spaceID, id string) (*domain.Me
 // Search returns filtered and paginated memories.
 // If an embedder is configured and a query is provided, performs hybrid search.
 func (s *MemoryService) Search(ctx context.Context, spaceID string, filter domain.MemoryFilter) ([]domain.Memory, int, error) {
-	// Hybrid search: embedder configured + query provided
+	if filter.Query != "" && s.autoModel != "" {
+		return s.autoHybridSearch(ctx, spaceID, filter)
+	}
 	if s.embedder != nil && filter.Query != "" {
 		return s.hybridSearch(ctx, spaceID, filter)
 	}
-	// Keyword-only search
 	return s.memories.List(ctx, spaceID, filter)
 }
 
@@ -182,6 +183,75 @@ func (s *MemoryService) hybridSearch(ctx context.Context, spaceID string, filter
 	return result, total, nil
 }
 
+func (s *MemoryService) autoHybridSearch(ctx context.Context, spaceID string, filter domain.MemoryFilter) ([]domain.Memory, int, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	fetchLimit := limit * 3
+
+	vecResults, err := s.memories.AutoVectorSearch(ctx, spaceID, filter.Query, filter, fetchLimit)
+	if err != nil {
+		slog.Warn("auto vector search failed, falling back to keyword search", "err", err)
+		return s.memories.List(ctx, spaceID, filter)
+	}
+
+	kwResults, err := s.memories.KeywordSearch(ctx, spaceID, filter.Query, filter, fetchLimit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	type scored struct {
+		mem   domain.Memory
+		score float64
+	}
+	byID := make(map[string]*scored, len(vecResults)+len(kwResults))
+
+	for _, m := range vecResults {
+		sc := 0.0
+		if m.Score != nil {
+			sc = *m.Score
+		}
+		byID[m.ID] = &scored{mem: m, score: sc}
+	}
+	for _, m := range kwResults {
+		if _, exists := byID[m.ID]; !exists {
+			neutralScore := 0.5
+			m.Score = &neutralScore
+			byID[m.ID] = &scored{mem: m, score: neutralScore}
+		}
+	}
+
+	merged := make([]scored, 0, len(byID))
+	for _, sc := range byID {
+		merged = append(merged, *sc)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		return merged[i].score > merged[j].score
+	})
+
+	total := len(merged)
+
+	if offset >= len(merged) {
+		return []domain.Memory{}, total, nil
+	}
+	end := offset + limit
+	if end > len(merged) {
+		end = len(merged)
+	}
+	page := merged[offset:end]
+
+	result := make([]domain.Memory, len(page))
+	for i, sc := range page {
+		result[i] = sc.mem
+	}
+	return result, total, nil
+}
+
 // Update modifies an existing memory with LWW conflict resolution.
 func (s *MemoryService) Update(ctx context.Context, spaceID, agentName, id, content string, tags []string, metadata json.RawMessage, ifMatch int) (*domain.Memory, error) {
 	current, err := s.memories.GetByID(ctx, spaceID, id)
@@ -217,8 +287,7 @@ func (s *MemoryService) Update(ctx context.Context, spaceID, agentName, id, cont
 	}
 	current.UpdatedBy = agentName
 
-	// Re-generate embedding only if content changed and embedder exists.
-	if contentChanged && s.embedder != nil {
+	if contentChanged && s.autoModel == "" && s.embedder != nil {
 		embedding, err := s.embedder.Embed(ctx, current.Content)
 		if err != nil {
 			return nil, err
@@ -264,7 +333,7 @@ func (s *MemoryService) BulkCreate(ctx context.Context, spaceID, agentName strin
 		}
 
 		var embedding []float32
-		if s.embedder != nil {
+		if s.autoModel == "" && s.embedder != nil {
 			var err error
 			embedding, err = s.embedder.Embed(ctx, item.Content)
 			if err != nil {

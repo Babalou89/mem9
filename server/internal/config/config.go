@@ -12,7 +12,13 @@ type Config struct {
 	RateLimit float64
 	RateBurst int
 
-	// Embedding provider (optional — omit for keyword-only search).
+	// Auto-embedding: TiDB Serverless generates embeddings via EMBED_TEXT().
+	// When set, takes priority over client-side embedding.
+	// Example: "tidbcloud_free/amazon/titan-embed-text-v2"
+	EmbedAutoModel string
+	EmbedAutoDims  int
+
+	// Client-side embedding provider (optional — omit for keyword-only search).
 	EmbedAPIKey  string
 	EmbedBaseURL string
 	EmbedModel   string
@@ -26,14 +32,16 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Port:         envOr("MNEMO_PORT", "8080"),
-		DSN:          dsn,
-		RateLimit:    envFloat("MNEMO_RATE_LIMIT", 100),
-		RateBurst:    envInt("MNEMO_RATE_BURST", 200),
-		EmbedAPIKey:  os.Getenv("MNEMO_EMBED_API_KEY"),
-		EmbedBaseURL: os.Getenv("MNEMO_EMBED_BASE_URL"),
-		EmbedModel:   os.Getenv("MNEMO_EMBED_MODEL"),
-		EmbedDims:    envInt("MNEMO_EMBED_DIMS", 1536),
+		Port:           envOr("MNEMO_PORT", "8080"),
+		DSN:            dsn,
+		RateLimit:      envFloat("MNEMO_RATE_LIMIT", 100),
+		RateBurst:      envInt("MNEMO_RATE_BURST", 200),
+		EmbedAutoModel: os.Getenv("MNEMO_EMBED_AUTO_MODEL"),
+		EmbedAutoDims:  envInt("MNEMO_EMBED_AUTO_DIMS", 1024),
+		EmbedAPIKey:    os.Getenv("MNEMO_EMBED_API_KEY"),
+		EmbedBaseURL:   os.Getenv("MNEMO_EMBED_BASE_URL"),
+		EmbedModel:     os.Getenv("MNEMO_EMBED_MODEL"),
+		EmbedDims:      envInt("MNEMO_EMBED_DIMS", 1536),
 	}
 	return cfg, nil
 }

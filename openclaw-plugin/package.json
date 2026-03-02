@@ -1,5 +1,5 @@
 {
-  "name": "@mnemo/openclaw-plugin",
+  "name": "mnemo",
   "version": "0.2.0",
   "description": "OpenClaw shared memory plugin — direct (TiDB Serverless) or server (mnemo-server) mode",
   "type": "module",

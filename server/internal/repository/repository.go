@@ -18,9 +18,12 @@ type MemoryRepo interface {
 	Count(ctx context.Context, spaceID string) (int, error)
 	BulkCreate(ctx context.Context, memories []*domain.Memory) error
 
-	// VectorSearch performs ANN search using cosine distance.
-	// Returns memories with Score populated, ordered by distance ascending.
+	// VectorSearch performs ANN search using cosine distance with a pre-computed vector.
 	VectorSearch(ctx context.Context, spaceID string, queryVec []float32, f domain.MemoryFilter, limit int) ([]domain.Memory, error)
+
+	// AutoVectorSearch performs ANN search using VEC_EMBED_COSINE_DISTANCE with a plain-text query.
+	// TiDB Serverless auto-embeds the query text.
+	AutoVectorSearch(ctx context.Context, spaceID string, queryText string, f domain.MemoryFilter, limit int) ([]domain.Memory, error)
 
 	// KeywordSearch performs substring search on content, returns memories ordered by updated_at DESC.
 	KeywordSearch(ctx context.Context, spaceID string, query string, f domain.MemoryFilter, limit int) ([]domain.Memory, error)

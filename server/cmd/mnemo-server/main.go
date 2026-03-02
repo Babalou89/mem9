@@ -40,18 +40,20 @@ func main() {
 		Model:   cfg.EmbedModel,
 		Dims:    cfg.EmbedDims,
 	})
-	if embedder != nil {
-		logger.Info("embedding provider configured", "model", cfg.EmbedModel, "dims", cfg.EmbedDims)
+	if cfg.EmbedAutoModel != "" {
+		logger.Info("auto-embedding enabled (TiDB EMBED_TEXT)", "model", cfg.EmbedAutoModel, "dims", cfg.EmbedAutoDims)
+	} else if embedder != nil {
+		logger.Info("client-side embedding configured", "model", cfg.EmbedModel, "dims", cfg.EmbedDims)
 	} else {
-		logger.Info("no embedding provider configured, keyword-only search active")
+		logger.Info("no embedding configured, keyword-only search active")
 	}
 
 	// Repositories.
-	memoryRepo := tidb.NewMemoryRepo(db)
+	memoryRepo := tidb.NewMemoryRepo(db, cfg.EmbedAutoModel)
 	tokenRepo := tidb.NewSpaceTokenRepo(db)
 
 	// Services.
-	memorySvc := service.NewMemoryService(memoryRepo, embedder)
+	memorySvc := service.NewMemoryService(memoryRepo, embedder, cfg.EmbedAutoModel)
 	spaceSvc := service.NewSpaceService(tokenRepo, memoryRepo)
 
 	// Middleware.
