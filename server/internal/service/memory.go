@@ -249,6 +249,9 @@ func (s *MemoryService) hybridSearch(ctx context.Context, spaceID string, filter
 	queryVec, err := s.embedder.Embed(ctx, filter.Query)
 	if err != nil {
 		slog.Warn("embedding failed, falling back to keyword search", "err", err)
+		if s.ftsAvailable {
+			return s.ftsOnlySearch(ctx, spaceID, filter)
+		}
 		return s.memories.List(ctx, spaceID, filter)
 	}
 
@@ -259,21 +262,22 @@ func (s *MemoryService) hybridSearch(ctx context.Context, spaceID string, filter
 	}
 
 	var kwResults []domain.Memory
+	var kwErr error
 	if s.ftsAvailable {
-		kwResults, err = s.memories.FTSSearch(ctx, spaceID, filter.Query, filter, fetchLimit)
-		if err != nil {
-			slog.Warn("keyword leg skipped", "err", err)
+		kwResults, kwErr = s.memories.FTSSearch(ctx, spaceID, filter.Query, filter, fetchLimit)
+		if kwErr != nil {
+			slog.Warn("keyword leg skipped", "err", kwErr)
 			kwResults = nil
 		}
 	} else {
-		kwResults, err = s.memories.KeywordSearch(ctx, spaceID, filter.Query, filter, fetchLimit)
-		if err != nil {
-			slog.Warn("keyword leg skipped", "err", err)
+		kwResults, kwErr = s.memories.KeywordSearch(ctx, spaceID, filter.Query, filter, fetchLimit)
+		if kwErr != nil {
+			slog.Warn("keyword leg skipped", "err", kwErr)
 			kwResults = nil
 		}
 	}
 
-	if vecErr != nil && kwResults == nil {
+	if vecErr != nil && kwErr != nil {
 		slog.Error("both search legs failed")
 		return []domain.Memory{}, 0, nil
 	}
@@ -319,7 +323,7 @@ func (s *MemoryService) autoHybridSearch(ctx context.Context, spaceID string, fi
 		}
 	}
 
-	if vecErr != nil && kwResults == nil {
+	if vecErr != nil && kwErr != nil {
 		slog.Error("both search legs failed")
 		return []domain.Memory{}, 0, nil
 	}

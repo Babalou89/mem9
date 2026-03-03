@@ -361,7 +361,8 @@ export class DirectBackend implements MemoryBackend {
         `SELECT * FROM memories WHERE ${conds.join(" AND ")} ORDER BY updated_at DESC LIMIT ? OFFSET ?`,
         [...filterParams, q, limit, offset],
       );
-      return { memories: this.rowsToMemories(dataResult), total: 0, limit, offset };
+      const memories = this.rowsToMemories(dataResult);
+      return { memories, total: memories.length, limit, offset };
     }
   }
 

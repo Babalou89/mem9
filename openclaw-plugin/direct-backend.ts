@@ -108,13 +108,14 @@ export class DirectBackend implements MemoryBackend {
     password: string,
     database: string,
     embedder: Embedder | null,
-    autoEmbedModel?: string
+    autoEmbedModel?: string,
+    autoEmbedDims?: number
   ) {
     this.conn = connect({ host, username, password, database });
     this.embedder = embedder;
     this.autoEmbedModel = autoEmbedModel ?? null;
     const dims = autoEmbedModel
-      ? 1024
+      ? (autoEmbedDims ?? 1024)
       : (embedder?.dims ?? 1536);
     this.initialized = initSchema(this.conn, dims, autoEmbedModel)
       .then((result) => {
@@ -393,6 +394,7 @@ export class DirectBackend implements MemoryBackend {
     const fetchLimit = limit * 3;
 
     let vecRows: MemoryRow[] = [];
+    let vecFailed = false;
     if (this.vectorLegEnabled) {
       try {
         if (this.autoEmbedModel) {
@@ -418,16 +420,18 @@ export class DirectBackend implements MemoryBackend {
         }
       } catch {
         console.warn("[mnemo] vector leg skipped");
-        vecRows = [];
+        vecFailed = true;
       }
     }
 
     let ftsRows: MemoryRow[] = [];
+    let kwFailed = false;
     if (this.ftsAvailable) {
       try {
         ftsRows = await this.runFTSQuery(q, filterConditions, filterValues, fetchLimit);
       } catch {
         console.warn("[mnemo] keyword leg skipped (FTS error)");
+        kwFailed = true;
       }
     } else {
       try {
@@ -437,10 +441,11 @@ export class DirectBackend implements MemoryBackend {
         )) as unknown as MemoryRow[];
       } catch {
         console.warn("[mnemo] keyword leg skipped (LIKE error)");
+        kwFailed = true;
       }
     }
 
-    if (vecRows.length === 0 && ftsRows.length === 0) {
+    if (vecFailed && kwFailed) {
       console.error("[mnemo] both search legs failed");
       return { data: [], total: 0, limit, offset };
     }

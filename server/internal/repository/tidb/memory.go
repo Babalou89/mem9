@@ -22,8 +22,19 @@ type MemoryRepo struct {
 
 func NewMemoryRepo(db *sql.DB, autoModel string) *MemoryRepo {
 	r := &MemoryRepo{db: db, autoModel: autoModel}
+	ensureFTSIndex(db)
 	r.ftsAvailable = probeFTS(db)
 	return r
+}
+
+// ensureFTSIndex attempts to create the FTS index if it does not yet exist.
+// Errors are ignored — the index may already exist or the cluster may not support it.
+func ensureFTSIndex(db *sql.DB) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, _ = db.ExecContext(ctx,
+		`ALTER TABLE memories ADD FULLTEXT INDEX idx_fts_content (content) WITH PARSER MULTILINGUAL ADD_COLUMNAR_REPLICA_ON_DEMAND`,
+	)
 }
 
 func probeFTS(db *sql.DB) bool {

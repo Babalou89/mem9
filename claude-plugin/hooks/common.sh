@@ -92,24 +92,46 @@ mnemo_direct_init() {
   local dims="${MNEMO_EMBED_DIMS:-1536}"
   local db="${MNEMO_DB_NAME:-mnemos}"
 
-  mnemo_sql "CREATE TABLE IF NOT EXISTS ${db}.memories (
-    id          VARCHAR(36)       PRIMARY KEY,
-    space_id    VARCHAR(36)       NOT NULL,
-    content     TEXT              NOT NULL,
-    key_name    VARCHAR(255),
-    source      VARCHAR(100),
-    tags        JSON,
-    metadata    JSON,
-    embedding   VECTOR(${dims})   NULL,
-    version     INT               DEFAULT 1,
-    updated_by  VARCHAR(100),
-    created_at  TIMESTAMP         DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMP         DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE INDEX idx_key    (space_id, key_name),
-    INDEX idx_space         (space_id),
-    INDEX idx_source        (space_id, source),
-    INDEX idx_updated       (space_id, updated_at)
-  )" >/dev/null 2>&1 || true
+  if [[ -n "${MNEMO_AUTO_EMBED_MODEL:-}" ]]; then
+    local auto_dims="${MNEMO_AUTO_EMBED_DIMS:-1024}"
+    mnemo_sql "CREATE TABLE IF NOT EXISTS ${db}.memories (
+      id          VARCHAR(36)       PRIMARY KEY,
+      space_id    VARCHAR(36)       NOT NULL,
+      content     TEXT              NOT NULL,
+      key_name    VARCHAR(255),
+      source      VARCHAR(100),
+      tags        JSON,
+      metadata    JSON,
+      embedding   VECTOR(${auto_dims}) GENERATED ALWAYS AS (EMBED_TEXT('${MNEMO_AUTO_EMBED_MODEL}', content)) STORED,
+      version     INT               DEFAULT 1,
+      updated_by  VARCHAR(100),
+      created_at  TIMESTAMP         DEFAULT CURRENT_TIMESTAMP,
+      updated_at  TIMESTAMP         DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE INDEX idx_key    (space_id, key_name),
+      INDEX idx_space         (space_id),
+      INDEX idx_source        (space_id, source),
+      INDEX idx_updated       (space_id, updated_at)
+    )" >/dev/null 2>&1 || true
+  else
+    mnemo_sql "CREATE TABLE IF NOT EXISTS ${db}.memories (
+      id          VARCHAR(36)       PRIMARY KEY,
+      space_id    VARCHAR(36)       NOT NULL,
+      content     TEXT              NOT NULL,
+      key_name    VARCHAR(255),
+      source      VARCHAR(100),
+      tags        JSON,
+      metadata    JSON,
+      embedding   VECTOR(${dims})   NULL,
+      version     INT               DEFAULT 1,
+      updated_by  VARCHAR(100),
+      created_at  TIMESTAMP         DEFAULT CURRENT_TIMESTAMP,
+      updated_at  TIMESTAMP         DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE INDEX idx_key    (space_id, key_name),
+      INDEX idx_space         (space_id),
+      INDEX idx_source        (space_id, source),
+      INDEX idx_updated       (space_id, updated_at)
+    )" >/dev/null 2>&1 || true
+  fi
 
   mnemo_sql "ALTER TABLE ${db}.memories ADD VECTOR INDEX idx_cosine ((VEC_COSINE_DISTANCE(embedding)))" >/dev/null 2>&1 || true
 
