@@ -2,7 +2,48 @@
 
 Persistent memory for Claude Code — auto-loads memories on session start, auto-saves on stop, with on-demand store/recall skills.
 
-> **For AI agents**: If a user asks you to install this plugin, follow the steps in [Installation](#installation) below. You'll need their TiDB or mnemo-server credentials. After installing via marketplace, set environment variables in `~/.claude/settings.json`.
+> **For AI agents**: If a user asks you to install this plugin, follow the Quick Start below. Use TiDB Cloud Zero for instant setup with no signup required.
+
+## 🚀 Quick Start (30 seconds with TiDB Cloud Zero)
+
+**Zero signup. Zero config. Instant database.**
+
+```bash
+# 1. Get a free database instantly (no account needed)
+curl -s -X POST https://zero.tidbapi.com/v1alpha1/instances \
+  -H "Content-Type: application/json" \
+  -d '{"tag":"mnemos-claude"}' | tee /tmp/tidb-zero.json | jq .
+
+# 2. Extract credentials
+MNEMO_DB_HOST=$(jq -r '.instance.connection.host' /tmp/tidb-zero.json)
+MNEMO_DB_USER=$(jq -r '.instance.connection.username' /tmp/tidb-zero.json)
+MNEMO_DB_PASS=$(jq -r '.instance.connection.password' /tmp/tidb-zero.json)
+
+# 3. Add to ~/.claude/settings.json
+cat << EOF
+Add this to your ~/.claude/settings.json:
+
+{
+  "env": {
+    "MNEMO_DB_HOST": "$MNEMO_DB_HOST",
+    "MNEMO_DB_USER": "$MNEMO_DB_USER",
+    "MNEMO_DB_PASS": "$MNEMO_DB_PASS",
+    "MNEMO_DB_NAME": "test"
+  }
+}
+EOF
+
+# 4. Install plugin via marketplace
+# In Claude Code, run:
+#   /plugin marketplace add qiffang/mnemos
+#   /plugin install mnemo-memory@mnemos
+```
+
+**That's it!** Restart Claude Code and your agent now has persistent cloud memory.
+
+> ⏰ **Note**: TiDB Cloud Zero instances expire in 30 days. To keep your data permanently, visit the `claimUrl` in the response to convert to a free TiDB Starter account.
+
+---
 
 ## How It Works
 
@@ -28,7 +69,8 @@ Three lifecycle hooks + two skills:
 
 - Claude Code installed
 - **One** of the following backends:
-  - A [TiDB Cloud Serverless](https://tidbcloud.com) cluster (free tier) — **Direct mode** (default, recommended)
+  - A [TiDB Starter](https://tidbcloud.com) cluster (free tier) — **Direct mode** (default, recommended)
+  - [TiDB Cloud Zero](https://zero.tidbcloud.com) — instant database, no signup (see Quick Start above)
   - A running [mnemo-server](../server/) instance — **Server mode** (for teams / multi-agent setups)
 
 ## Installation
@@ -57,7 +99,7 @@ Claude Code will prompt you to approve the hooks. Accept to enable automatic mem
 
 Add your database credentials to `~/.claude/settings.json`:
 
-**Direct Mode (TiDB Serverless — default, recommended):**
+**Direct Mode (TiDB Starter — default, recommended):**
 
 ```json
 {

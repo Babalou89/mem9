@@ -10,11 +10,42 @@
 </p>
 
 <p align="center">
-  <a href="https://tidbcloud.com"><img src="https://img.shields.io/badge/Powered%20by-TiDB%20Cloud%20Serverless-E60C0C?style=flat&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIj48cGF0aCBkPSJNMTEuOTk4NCAxLjk5OTAyTDMuNzE4NzUgNy40OTkwMkwzLjcxODc1IDE3TDExLjk5NjQgMjIuNUwyMC4yODE0IDE3VjcuNDk5MDJMMTEuOTk4NCAxLjk5OTAyWiIgZmlsbD0id2hpdGUiLz48L3N2Zz4=" alt="Powered by TiDB Cloud Serverless"></a>
+  <a href="https://tidbcloud.com"><img src="https://img.shields.io/badge/Powered%20by-TiDB%20Starter-E60C0C?style=flat&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIj48cGF0aCBkPSJNMTEuOTk4NCAxLjk5OTAyTDMuNzE4NzUgNy40OTkwMkwzLjcxODc1IDE3TDExLjk5NjQgMjIuNUwyMC4yODE0IDE3VjcuNDk5MDJMMTEuOTk4NCAxLjk5OTAyWiIgZmlsbD0id2hpdGUiLz48L3N2Zz4=" alt="Powered by TiDB Starter"></a>
   <a href="https://goreportcard.com/report/github.com/qiffang/mnemos/server"><img src="https://goreportcard.com/badge/github.com/qiffang/mnemos/server" alt="Go Report Card"></a>
   <a href="https://github.com/qiffang/mnemos/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
   <a href="https://github.com/qiffang/mnemos"><img src="https://img.shields.io/github/stars/qiffang/mnemos?style=social" alt="Stars"></a>
 </p>
+
+---
+
+## 🚀 30-Second Quick Start (TiDB Cloud Zero)
+
+**Zero signup. Zero config. Instant database.**
+
+```bash
+# 1. Get a free database instantly (no account needed)
+curl -s -X POST https://zero.tidbapi.com/v1alpha1/instances \
+  -H "Content-Type: application/json" \
+  -d '{"tag":"mnemos"}' | tee ~/.mnemos-zero.json | jq .
+
+# 2. Extract credentials
+export MNEMO_DB_HOST=$(jq -r '.instance.connection.host' ~/.mnemos-zero.json)
+export MNEMO_DB_USER=$(jq -r '.instance.connection.username' ~/.mnemos-zero.json)
+export MNEMO_DB_PASS=$(jq -r '.instance.connection.password' ~/.mnemos-zero.json)
+export MNEMO_DB_NAME="test"
+
+# 3. Install plugin for your agent (pick one)
+```
+
+| Platform | Install |
+|----------|---------|
+| **Claude Code** | `/plugin marketplace add qiffang/mnemos` then `/plugin install mnemo-memory@mnemos` |
+| **OpenCode** | Add `"plugin": ["mnemo-opencode"]` to `opencode.json` |
+| **OpenClaw** | Add `mnemo` to `openclaw.json` plugins (see [openclaw-plugin/README](openclaw-plugin/README.md)) |
+
+**That's it!** Your agent now has persistent cloud memory.
+
+> ⏰ **Note**: TiDB Cloud Zero instances expire in 30 days. To keep your data permanently, visit the `claimUrl` in the response to convert to a free TiDB Starter account.
 
 ---
 
@@ -27,22 +58,23 @@ AI coding agents — Claude Code, OpenCode, OpenClaw, and others — often maint
 - 📁 **Local files** — Memory is tied to a single machine, lost when you switch devices
 - 🚫 **No team sharing** — Your teammate's agent can't benefit from your agent's discoveries
 
-**mnemos** gives every agent a shared, cloud-persistent memory with hybrid vector + keyword search — powered by <a href="https://tidbcloud.com"><img src="assets/tidb-logo.png" alt="TiDB Cloud Serverless" height="24" align="center" /></a> [TiDB Cloud Serverless](https://tidbcloud.com).
+**mnemos** gives every agent a shared, cloud-persistent memory with hybrid vector + keyword search — powered by [TiDB Starter](https://tidbcloud.com).
 
-## Why <img src="assets/tidb-logo.png" alt="TiDB" height="32" align="center" /> TiDB Serverless?
+## Why TiDB Starter?
 
-mnemos uses <a href="https://tidbcloud.com"><img src="assets/tidb-logo.png" alt="TiDB Cloud Serverless" height="24" align="center" /></a> [TiDB Cloud Serverless](https://tidbcloud.com) as its storage layer. Here’s why:
+mnemos uses [TiDB Starter](https://tidbcloud.com) (formerly TiDB Serverless) as its storage layer:
 
 | Feature | What it means for you |
 |---|---|
 | **Free tier** | 25 GiB storage, 250M Request Units/month — enough for most individual and small team use |
+| **TiDB Cloud Zero** | Instant database provisioning via API — no signup required for first 30 days |
 | **Native VECTOR type** | Hybrid search (vector + keyword) without a separate vector database |
 | **Auto-embedding (`EMBED_TEXT`)** | TiDB generates embeddings server-side — no OpenAI key needed for semantic search |
 | **HTTP Data API** | Plugins talk to TiDB via `fetch`/`curl` — no database drivers, no connection pools |
 | **Zero ops** | No servers to manage, no scaling to worry about, automatic backups |
 | **MySQL compatible** | Migrate to self-hosted TiDB or MySQL anytime |
 
-This architecture means your agent plugins are **truly stateless** — all state lives in TiDB Serverless, making deployments simple and portable.
+This architecture means your agent plugins are **truly stateless** — all state lives in TiDB, making deployments simple and portable.
 
 ## Supported Agents
 
@@ -50,14 +82,14 @@ mnemos provides native plugins for major AI coding agent platforms:
 
 | Platform | Plugin | How It Works | Install Guide |
 |---|---|---|---|
-| **Claude Code** | Hooks + Skills | Auto-loads memories on session start, auto-saves on stop | [`claude-plugin/README.md`](claude-plugin/README.md) — or run `/plugin marketplace add qiffang/mnemos` |
+| **Claude Code** | Hooks + Skills | Auto-loads memories on session start, auto-saves on stop | [`claude-plugin/README.md`](claude-plugin/README.md) |
 | **OpenCode** | Plugin SDK | `system.transform` injects memories, `session.idle` auto-captures | [`opencode-plugin/README.md`](opencode-plugin/README.md) |
 | **OpenClaw** | Memory Plugin | Replaces built-in memory slot (`kind: "memory"`), framework manages lifecycle | [`openclaw-plugin/README.md`](openclaw-plugin/README.md) |
 | **Any HTTP client** | REST API / SQL | `curl` to mnemo-server or TiDB HTTP Data API directly | [API Reference](#api-reference-server-mode) |
 
 All plugins expose the same 5 tools: `memory_store`, `memory_search`, `memory_get`, `memory_update`, `memory_delete`.
 
-> **Agent**: To help a user install mnemos, identify which platform they use, then follow the corresponding Install Guide link above. Each guide covers both Direct mode and Server mode.
+> **🤖 For AI Agents**: To install mnemos for a user, run the curl command in Quick Start above to provision a database, then follow the platform-specific README for detailed configuration.
 
 ## Two Modes, One Plugin
 
@@ -77,13 +109,13 @@ The same plugin works in two modes — just change the config:
                           │                         │
                           ▼                         ▼
                 ┌──────────────────┐     ┌───────────────────┐
-                │  TiDB Cloud      │     │  mnemo-server     │
-                │  Serverless      │     │  (Go, self-host)  │
-                │                  │     │                   │
-                │  Free tier       │     │  Multi-agent      │
-                │  Zero ops        │     │  Space isolation  │
-                │  HTTP Data API   │     │  LLM merge (v2)   │
-                └──────────────────┘     └────────┬──────────┘
+                │  TiDB Starter    │     │  mnemo-server     │
+                │                  │     │  (Go, self-host)  │
+                │  Free tier       │     │                   │
+                │  Zero ops        │     │  Multi-agent      │
+                │  HTTP Data API   │     │  Space isolation  │
+                └──────────────────┘     │  LLM merge (v2)   │
+                                         └────────┬──────────┘
                                                   │
                                          ┌────────┴────────┐
                                          │  TiDB / MySQL   │
@@ -100,31 +132,14 @@ The same plugin works in two modes — just change the config:
 
 **Direct mode is the default.** Mode is inferred from config: `MNEMO_DB_HOST` → direct, `MNEMO_API_URL` → server.
 
-## Quick Start — Direct Mode (30 seconds)
+## Alternative: Use Your Own Database
 
-For individual developers. Connect your agent directly to TiDB Cloud — no server to deploy.
+If you prefer not to use TiDB Cloud Zero, you can:
 
-1. Create a free [TiDB Cloud Serverless](https://tidbcloud.com) cluster
-2. Install the plugin for your agent platform (pick one):
+1. **Create a TiDB Starter cluster** at [tidbcloud.com](https://tidbcloud.com) (free tier available)
+2. **Use any MySQL-compatible database** — just set the connection credentials
 
-| Platform | Install command |
-|---|---|
-| Claude Code | **Marketplace**: `/plugin marketplace add qiffang/mnemos` then `/plugin install mnemo-memory@mnemos` <br/> **Manual**: See [`claude-plugin/README.md`](claude-plugin/README.md) |
-| OpenCode | Add `"plugin": ["mnemo-opencode"]` to `opencode.json` → set env vars |
-| OpenClaw | `npm install mnemo-openclaw` → add to `openclaw.json` |
-3. Set your database credentials (Claude Code / OpenCode use env vars, OpenClaw uses `openclaw.json` config):
-
-```bash
-# Claude Code / OpenCode — env vars
-export MNEMO_DB_HOST="gateway01.us-east-1.prod.aws.tidbcloud.com"
-export MNEMO_DB_USER="xxx.root"
-export MNEMO_DB_PASS="xxx"
-export MNEMO_DB_NAME="mnemos"
-```
-
-That's it. The plugin auto-creates the table, loads past memories on session start, and saves new ones on session end. **Zero deployment, zero ops.**
-
-Each plugin's README has the complete step-by-step guide with verification steps.
+Then configure your plugin with your own credentials instead of the Zero-provisioned ones.
 
 ## Quick Start — Server Mode (Team Setup)
 
@@ -162,7 +177,7 @@ Each agent uses its own token. All agents in the same space share one memory poo
 
 ## Stateless Agents, Cloud Memory
 
-A key design principle: **agent plugins carry zero state.** All memory lives in TiDB Serverless (direct mode) or mnemo-server (server mode). This means:
+A key design principle: **agent plugins carry zero state.** All memory lives in TiDB (direct mode) or mnemo-server (server mode). This means:
 
 - **Agent plugins stay stateless** — deploy any number of agent instances freely; they all share the same memory pool via TiDB
 - **Switch machines freely** — your agent's memory follows you, not your laptop
@@ -206,7 +221,7 @@ export MNEMO_EMBED_DIMS="768"
 
 **Or use TiDB auto-embedding — no external API needed:**
 
-TiDB Cloud Serverless can generate embeddings server-side via `EMBED_TEXT()`. Set `autoEmbedModel` in your plugin config and TiDB handles the rest — no OpenAI key, no Ollama, no extra cost:
+TiDB Starter can generate embeddings server-side via `EMBED_TEXT()`. Set `autoEmbedModel` in your plugin config and TiDB handles the rest — no OpenAI key, no Ollama, no extra cost:
 
 ```json
 {
@@ -330,7 +345,10 @@ mnemos/
 │
 ├── claude-plugin/              # Claude Code plugin (Hooks + Skills)
 │   ├── hooks/                  # Lifecycle hooks (bash + curl)
-│   └── skills/                 # memory-recall + memory-store skills
+│   └── skills/                 # memory-recall + memory-store + mnemos-setup
+│
+├── skills/                     # Shared skills (OpenClaw ClawHub format)
+│   └── mnemos-setup/           # Setup skill with TiDB Cloud Zero quick start
 │
 └── docs/DESIGN.md              # Full design document
 ```
@@ -355,7 +373,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 ---
 
 <p align="center">
-  <a href="https://tidbcloud.com"><img src="assets/tidb-logo.png" alt="TiDB Cloud Serverless" height="36" /></a>
+  <a href="https://tidbcloud.com"><img src="assets/tidb-logo.png" alt="TiDB Starter" height="36" /></a>
   <br/>
-  <sub>Built with <a href="https://tidbcloud.com">TiDB Cloud Serverless</a> — zero-ops database with native vector search.</sub>
+  <sub>Built with <a href="https://tidbcloud.com">TiDB Starter</a> — zero-ops database with native vector search.</sub>
 </p>

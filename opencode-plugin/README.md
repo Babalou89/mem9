@@ -2,6 +2,35 @@
 
 Persistent memory for [OpenCode](https://opencode.ai) — injects memories into system prompt automatically, captures session context on idle, with 5 memory tools.
 
+## 🚀 Quick Start (30 seconds with TiDB Cloud Zero)
+
+**Zero signup. Zero config. Instant database.**
+
+```bash
+# 1. Get a free database instantly (no account needed)
+curl -s -X POST https://zero.tidbapi.com/v1alpha1/instances \
+  -H "Content-Type: application/json" \
+  -d '{"tag":"mnemos-opencode"}' | tee /tmp/tidb-zero.json | jq .
+
+# 2. Set environment variables from the response
+export MNEMO_DB_HOST=$(jq -r '.instance.connection.host' /tmp/tidb-zero.json)
+export MNEMO_DB_USER=$(jq -r '.instance.connection.username' /tmp/tidb-zero.json)
+export MNEMO_DB_PASS=$(jq -r '.instance.connection.password' /tmp/tidb-zero.json)
+export MNEMO_DB_NAME="test"
+
+# 3. Add plugin to opencode.json
+echo '{"plugin": ["mnemo-opencode"]}' > opencode.json
+
+# 4. Start OpenCode - plugin auto-installs from npm
+opencode
+```
+
+**That's it!** Your agent now has persistent cloud memory.
+
+> ⏰ **Note**: TiDB Cloud Zero instances expire in 30 days. To keep your data permanently, visit the `claimUrl` in the response to convert to a free TiDB Starter account.
+
+---
+
 ## How It Works
 
 ```
@@ -26,7 +55,8 @@ Session Idle Event → Auto-capture session marker
 
 - [OpenCode](https://opencode.ai) installed
 - **One** of the following backends:
-  - A [TiDB Cloud Serverless](https://tidbcloud.com) cluster (free tier) — **Direct mode** (default, recommended)
+  - A [TiDB Starter](https://tidbcloud.com) cluster (free tier) — **Direct mode** (default, recommended)
+  - [TiDB Cloud Zero](https://zero.tidbcloud.com) — instant database, no signup (see Quick Start above)
   - A running [mnemo-server](../server/) instance — **Server mode** (for teams / multi-agent setups)
 
 ## Installation
@@ -67,7 +97,7 @@ Then register in `opencode.json`:
 
 ### Set environment variables
 
-#### Option A: Direct Mode (default — TiDB Serverless)
+#### Option A: Direct Mode (default — TiDB Starter)
 
 Connect directly to TiDB Cloud. No server deployment needed.
 
@@ -102,7 +132,7 @@ The plugin auto-detects the mode:
 Start OpenCode in your project. You should see one of these log lines:
 
 ```
-[mnemo] Direct mode (TiDB Serverless HTTP Data API)
+[mnemo] Direct mode (TiDB Starter HTTP Data API)
 [mnemo] Server mode (mnemo-server REST API)
 ```
 
@@ -112,7 +142,7 @@ If you see `[mnemo] No mode configured...`, check your env vars.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `MNEMO_DB_HOST` | Yes (direct) | — | TiDB Serverless host |
+| `MNEMO_DB_HOST` | Yes (direct) | — | TiDB Starter host |
 | `MNEMO_DB_USER` | Yes (direct) | — | TiDB username |
 | `MNEMO_DB_PASS` | Yes (direct) | — | TiDB password |
 | `MNEMO_DB_NAME` | No | `mnemos` | Database name |

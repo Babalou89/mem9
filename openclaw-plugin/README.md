@@ -2,6 +2,48 @@
 
 Memory plugin for [OpenClaw](https://github.com/openclaw) — replaces the built-in memory slot with cloud-persistent shared memory. Supports hybrid vector + keyword search, direct TiDB or server mode.
 
+## 🚀 Quick Start (30 seconds with TiDB Cloud Zero)
+
+**Zero signup. Zero config. Instant database.**
+
+```bash
+# 1. Get a free database instantly (no account needed)
+curl -s -X POST https://zero.tidbapi.com/v1alpha1/instances \
+  -H "Content-Type: application/json" \
+  -d '{"tag":"mnemos-openclaw"}' | tee /tmp/tidb-zero.json | jq .
+
+# 2. Extract credentials and create config
+HOST=$(jq -r '.instance.connection.host' /tmp/tidb-zero.json)
+USER=$(jq -r '.instance.connection.username' /tmp/tidb-zero.json)
+PASS=$(jq -r '.instance.connection.password' /tmp/tidb-zero.json)
+
+echo "Add this to your openclaw.json:"
+cat << EOF
+{
+  "plugins": {
+    "slots": { "memory": "mnemo" },
+    "entries": {
+      "mnemo": {
+        "enabled": true,
+        "config": {
+          "host": "$HOST",
+          "username": "$USER",
+          "password": "$PASS",
+          "database": "test"
+        }
+      }
+    }
+  }
+}
+EOF
+```
+
+**That's it!** Restart OpenClaw and your agent now has persistent cloud memory.
+
+> ⏰ **Note**: TiDB Cloud Zero instances expire in 30 days. To keep your data permanently, visit the `claimUrl` in the response to convert to a free TiDB Starter account.
+
+---
+
 ## How It Works
 
 ```
@@ -41,7 +83,8 @@ This is a `kind: "memory"` plugin — OpenClaw's framework manages when to load/
 
 - [OpenClaw](https://github.com/openclaw) installed (`>=2026.1.26`)
 - **One** of the following backends:
-  - A [TiDB Cloud Serverless](https://tidbcloud.com) cluster (free tier) — **Direct mode** (default, recommended)
+  - A [TiDB Starter](https://tidbcloud.com) cluster (free tier) — **Direct mode** (default, recommended)
+  - [TiDB Cloud Zero](https://zero.tidbcloud.com) — instant database, no signup (see Quick Start above)
   - A running [mnemo-server](../server/) instance — **Server mode** (for teams / multi-agent setups)
 
 ## Installation
@@ -64,7 +107,7 @@ npm install
 
 Add mnemo to your project's `openclaw.json`:
 
-#### Option A: Direct Mode (default — TiDB Serverless)
+#### Option A: Direct Mode (default — TiDB Starter)
 
 Connect directly to TiDB Cloud. No server deployment needed.
 
@@ -207,7 +250,7 @@ Defined in `openclaw.plugin.json`:
 
 | Field | Type | Mode | Description |
 |---|---|---|---|
-| `host` | string | Direct | TiDB Serverless host |
+| `host` | string | Direct | TiDB Starter host |
 | `username` | string | Direct | TiDB username |
 | `password` | string | Direct | TiDB password |
 | `database` | string | Direct | Database name (default: `mnemos`) |
