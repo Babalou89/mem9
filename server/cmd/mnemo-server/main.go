@@ -64,7 +64,6 @@ func main() {
 
 	// Repositories.
 	tenantRepo := tidb.NewTenantRepo(db)
-	tenantTokenRepo := tidb.NewTenantTokenRepo(db)
 	tenantPool := tenant.NewPool(tenant.PoolConfig{
 		MaxIdle:     cfg.TenantPoolMaxIdle,
 		MaxOpen:     cfg.TenantPoolMaxOpen,
@@ -78,17 +77,17 @@ func main() {
 	if cfg.TiDBZeroEnabled {
 		zeroClient = tenant.NewZeroClient(cfg.TiDBZeroAPIURL)
 	}
-	tenantSvc := service.NewTenantService(tenantRepo, tenantTokenRepo, zeroClient, tenantPool, logger)
+	tenantSvc := service.NewTenantService(tenantRepo, zeroClient, tenantPool, logger)
 
 	// Middleware.
-	authMW := middleware.Auth(tenantTokenRepo, tenantRepo, tenantPool)
+	tenantMW := middleware.ResolveTenant(tenantRepo, tenantPool)
 	rl := middleware.NewRateLimiter(cfg.RateLimit, cfg.RateBurst)
 	defer rl.Stop()
 	rateMW := rl.Middleware()
 
 	// Handler.
 	srv := handler.NewServer(tenantSvc, embedder, llmClient, cfg.EmbedAutoModel, service.IngestMode(cfg.IngestMode), logger)
-	router := srv.Router(authMW, rateMW)
+	router := srv.Router(tenantMW, rateMW)
 
 	httpSrv := &http.Server{
 		Addr:         ":" + cfg.Port,

@@ -123,14 +123,13 @@ type TenantToken struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// TenantInfo is the response for GET /api/tenants/{id}/info.
+// TenantInfo is the response for GET /v1alpha1/mem9s/{tenantID}/info.
 type TenantInfo struct {
 	TenantID    string       `json:"tenant_id"`
 	Name        string       `json:"name"`
 	Status      TenantStatus `json:"status"`
 	Provider    string       `json:"provider"`
 	ClaimURL    string       `json:"claim_url,omitempty"`
-	AgentCount  int          `json:"agent_count"`
 	MemoryCount int          `json:"memory_count"`
 	CreatedAt   time.Time    `json:"created_at"`
 }

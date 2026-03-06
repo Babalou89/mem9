@@ -2,11 +2,9 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
-	"github.com/google/uuid"
 	"github.com/qiffang/mnemos/server/internal/domain"
 	"github.com/qiffang/mnemos/server/internal/repository"
 	"github.com/qiffang/mnemos/server/internal/tenant"
@@ -40,7 +38,6 @@ const (
 
 type TenantService struct {
 	tenants repository.TenantRepo
-	tokens  repository.TenantTokenRepo
 	zero    *tenant.ZeroClient
 	pool    *tenant.TenantPool
 	logger  *slog.Logger
@@ -48,77 +45,37 @@ type TenantService struct {
 
 func NewTenantService(
 	tenants repository.TenantRepo,
-	tokens repository.TenantTokenRepo,
 	zero *tenant.ZeroClient,
 	pool *tenant.TenantPool,
 	logger *slog.Logger,
 ) *TenantService {
-	return &TenantService{tenants: tenants, tokens: tokens, zero: zero, pool: pool, logger: logger}
+	return &TenantService{tenants: tenants, zero: zero, pool: pool, logger: logger}
 }
 
-type RegisterInput struct {
-	Name string `json:"name"`
+// ProvisionResult is the output of Provision.
+type ProvisionResult struct {
+	ID       string `json:"id"`
+	ClaimURL string `json:"claim_url,omitempty"`
 }
 
-type RegisterResult struct {
-	TenantID string              `json:"tenant_id"`
-	Token    string              `json:"token"`
-	ClaimURL string              `json:"claim_url,omitempty"`
-	Status   domain.TenantStatus `json:"status"`
-}
-
-func (s *TenantService) Register(ctx context.Context, input RegisterInput) (*RegisterResult, error) {
-	if err := validateTenantInput(input.Name); err != nil {
-		return nil, err
-	}
-
-	existing, err := s.tenants.GetByName(ctx, input.Name)
-	if err == nil {
-		if existing.Status != domain.TenantDeleted {
-			token, err := s.createToken(ctx, existing.ID)
-			if err != nil {
-				return nil, err
-			}
-			return &RegisterResult{
-				TenantID: existing.ID,
-				Token:    token,
-				ClaimURL: existing.ClaimURL,
-				Status:   existing.Status,
-			}, nil
-		}
-	} else if !errors.Is(err, domain.ErrNotFound) {
-		return nil, err
-	}
-
+// Provision creates a new TiDB Zero instance and registers it as a tenant.
+// The TiDB Zero instance ID is used as the tenant ID.
+func (s *TenantService) Provision(ctx context.Context) (*ProvisionResult, error) {
 	if s.zero == nil {
-		return nil, &domain.ValidationError{Message: "provisioning disabled"}
+		return nil, &domain.ValidationError{Message: "provisioning disabled (TiDB Zero not configured)"}
 	}
 
-	tenantID := "t_" + uuid.New().String()
-	instance, err := s.zero.CreateInstance(ctx, "mnemos-"+tenantID)
+	instance, err := s.zero.CreateInstance(ctx, "mem9s")
 	if err != nil {
-		t := &domain.Tenant{
-			ID:            tenantID,
-			Name:          input.Name,
-			DBHost:        "",
-			DBPort:        0,
-			DBUser:        "",
-			DBPassword:    "",
-			DBName:        "",
-			DBTLS:         true,
-			Provider:      "tidb_zero",
-			Status:        domain.TenantProvisioning,
-			SchemaVersion: 0,
-		}
-		if createErr := s.tenants.Create(ctx, t); createErr != nil {
-			return nil, createErr
-		}
-		return &RegisterResult{TenantID: tenantID, Status: domain.TenantProvisioning}, err
+		return nil, fmt.Errorf("provision TiDB Zero instance: %w", err)
 	}
+
+	// Use the TiDB Zero instance ID as the tenant ID.
+	tenantID := instance.ID
 
 	t := &domain.Tenant{
 		ID:            tenantID,
-		Name:          input.Name,
+		Name:          tenantID, // Use ID as name for auto-provisioned tenants.
 		DBHost:        instance.Host,
 		DBPort:        instance.Port,
 		DBUser:        instance.Username,
@@ -132,55 +89,32 @@ func (s *TenantService) Register(ctx context.Context, input RegisterInput) (*Reg
 		SchemaVersion: 0,
 	}
 	if err := s.tenants.Create(ctx, t); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create tenant record: %w", err)
 	}
 
 	if err := s.initSchema(ctx, t); err != nil {
 		if s.logger != nil {
 			s.logger.Error("tenant schema init failed", "tenant_id", tenantID, "err", err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("init tenant schema: %w", err)
 	}
 
 	if err := s.tenants.UpdateStatus(ctx, tenantID, domain.TenantActive); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("activate tenant: %w", err)
 	}
 	if err := s.tenants.UpdateSchemaVersion(ctx, tenantID, 1); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("update schema version: %w", err)
 	}
 
-	token, err := s.createToken(ctx, tenantID)
-	if err != nil {
-		return nil, err
-	}
-
-	return &RegisterResult{
-		TenantID: tenantID,
-		Token:    token,
+	return &ProvisionResult{
+		ID:       tenantID,
 		ClaimURL: instance.ClaimURL,
-		Status:   domain.TenantActive,
 	}, nil
 }
 
-func (s *TenantService) AddToken(ctx context.Context, tenantID string) (string, error) {
-	t, err := s.tenants.GetByID(ctx, tenantID)
-	if err != nil {
-		return "", err
-	}
-	if t.Status != domain.TenantActive {
-		return "", &domain.ValidationError{Message: "tenant not active"}
-	}
-
-	return s.createToken(ctx, tenantID)
-}
-
+// GetInfo returns tenant info including agent and memory counts.
 func (s *TenantService) GetInfo(ctx context.Context, tenantID string) (*domain.TenantInfo, error) {
 	t, err := s.tenants.GetByID(ctx, tenantID)
-	if err != nil {
-		return nil, err
-	}
-
-	tokens, err := s.tokens.ListByTenant(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +138,6 @@ func (s *TenantService) GetInfo(ctx context.Context, tenantID string) (*domain.T
 		Status:      t.Status,
 		Provider:    t.Provider,
 		ClaimURL:    t.ClaimURL,
-		AgentCount:  len(tokens),
 		MemoryCount: count,
 		CreatedAt:   t.CreatedAt,
 	}, nil
@@ -220,31 +153,6 @@ func (s *TenantService) initSchema(ctx context.Context, t *domain.Tenant) error 
 	}
 	if _, err := db.ExecContext(ctx, tenantMemorySchema); err != nil {
 		return fmt.Errorf("init tenant schema: memories: %w", err)
-	}
-	return nil
-}
-
-func (s *TenantService) createToken(ctx context.Context, tenantID string) (string, error) {
-	token, err := domain.GenerateToken()
-	if err != nil {
-		return "", err
-	}
-	tt := &domain.TenantToken{
-		APIToken: token,
-		TenantID: tenantID,
-	}
-	if err := s.tokens.CreateToken(ctx, tt); err != nil {
-		return "", err
-	}
-	return token, nil
-}
-
-func validateTenantInput(name string) error {
-	if name == "" {
-		return &domain.ValidationError{Field: "name", Message: "required"}
-	}
-	if len(name) > 255 {
-		return &domain.ValidationError{Field: "name", Message: "too long (max 255)"}
 	}
 	return nil
 }

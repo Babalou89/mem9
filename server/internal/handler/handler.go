@@ -63,9 +63,6 @@ type tenantSvcKey string
 // resolveServices returns the correct services for a request.
 func (s *Server) resolveServices(auth *domain.AuthInfo) resolvedSvc {
 	if auth.TenantID == "" {
-		// Defensive path: currently unreachable in production because auth middleware
-		// always sets TenantID for valid tokens. Kept for future unauthenticated routes
-		// (e.g., health-check handlers that bypass auth) and test harnesses.
 		key := tenantSvcKey(fmt.Sprintf("db-%p", auth.TenantDB))
 		if cached, ok := s.svcCache.Load(key); ok {
 			return cached.(resolvedSvc)
@@ -92,7 +89,7 @@ func (s *Server) resolveServices(auth *domain.AuthInfo) resolvedSvc {
 }
 
 // Router builds the chi router with all routes and middleware.
-func (s *Server) Router(authMW, rateLimitMW func(http.Handler) http.Handler) http.Handler {
+func (s *Server) Router(tenantMW, rateLimitMW func(http.Handler) http.Handler) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware.
@@ -106,26 +103,25 @@ func (s *Server) Router(authMW, rateLimitMW func(http.Handler) http.Handler) htt
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Register tenant — no auth (bootstrap endpoint).
-	r.Post("/api/tenants/register", s.registerTenant)
+	// Provision a new tenant — no auth, no body.
+	r.Post("/v1alpha1/mem9s", s.provisionMem9s)
 
-	// Authenticated routes.
-	r.Group(func(r chi.Router) {
-		r.Use(authMW)
+	// Tenant-scoped routes — tenantMW resolves {tenantID} to DB connection.
+	r.Route("/v1alpha1/mem9s/{tenantID}", func(r chi.Router) {
+		r.Use(tenantMW)
 
 		// Memory CRUD.
-		r.Post("/api/memories", s.createMemory)
-		r.Get("/api/memories", s.listMemories)
-		r.Get("/api/memories/bootstrap", s.bootstrapMemories)
-		r.Post("/api/memories/bulk", s.bulkCreateMemories)
-		r.Get("/api/memories/{id}", s.getMemory)
-		r.Put("/api/memories/{id}", s.updateMemory)
-		r.Delete("/api/memories/{id}", s.deleteMemory)
-		r.Post("/api/memories/ingest", s.ingestMemories)
+		r.Post("/memories", s.createMemory)
+		r.Get("/memories", s.listMemories)
+		r.Get("/memories/bootstrap", s.bootstrapMemories)
+		r.Post("/memories/bulk", s.bulkCreateMemories)
+		r.Get("/memories/{id}", s.getMemory)
+		r.Put("/memories/{id}", s.updateMemory)
+		r.Delete("/memories/{id}", s.deleteMemory)
+		r.Post("/memories/ingest", s.ingestMemories)
 
-		// Tenant management.
-		r.Post("/api/tenants/{tenantID}/tokens", s.addTenantToken)
-		r.Get("/api/tenants/{tenantID}/info", s.getTenantInfo)
+		// Tenant info.
+		r.Get("/info", s.getTenantInfo)
 	})
 
 	return r

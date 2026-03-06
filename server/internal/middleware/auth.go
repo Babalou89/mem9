@@ -3,9 +3,9 @@ package middleware
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"strings"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/qiffang/mnemos/server/internal/domain"
 	"github.com/qiffang/mnemos/server/internal/repository"
@@ -18,25 +18,41 @@ const authInfoKey contextKey = "authInfo"
 
 const AgentIDHeader = "X-Mnemo-Agent-Id"
 
-func Auth(
-	tenantTokens repository.TenantTokenRepo,
+// ResolveTenant is middleware that extracts {tenantID} from the URL path,
+// validates the tenant exists and is active, obtains a DB connection from the
+// pool, and stores an AuthInfo in the request context.
+func ResolveTenant(
 	tenantRepo repository.TenantRepo,
 	pool *tenant.TenantPool,
 ) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := extractBearerToken(r)
-			if token == "" {
-				writeError(w, http.StatusUnauthorized, "missing authorization token")
+			tenantID := chi.URLParam(r, "tenantID")
+			if tenantID == "" {
+				writeError(w, http.StatusBadRequest, "missing tenant ID in path")
 				return
 			}
 
-			info, err := resolveToken(r.Context(), token, tenantTokens, tenantRepo, pool)
+			t, err := tenantRepo.GetByID(r.Context(), tenantID)
 			if err != nil {
-				writeError(w, http.StatusUnauthorized, "invalid token")
+				writeError(w, http.StatusNotFound, "tenant not found")
+				return
+			}
+			if t.Status != domain.TenantActive {
+				writeError(w, http.StatusForbidden, "tenant not active")
 				return
 			}
 
+			db, err := pool.Get(r.Context(), t.ID, t.DSN())
+			if err != nil {
+				writeError(w, http.StatusServiceUnavailable, "cannot connect to tenant database")
+				return
+			}
+
+			info := &domain.AuthInfo{
+				TenantID: t.ID,
+				TenantDB: db,
+			}
 			if agentID := r.Header.Get(AgentIDHeader); agentID != "" {
 				info.AgentName = agentID
 			}
@@ -47,50 +63,9 @@ func Auth(
 	}
 }
 
-func resolveToken(
-	ctx context.Context,
-	token string,
-	tenantTokens repository.TenantTokenRepo,
-	tenantRepo repository.TenantRepo,
-	pool *tenant.TenantPool,
-) (*domain.AuthInfo, error) {
-	tt, err := tenantTokens.GetByToken(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-
-	t, tErr := tenantRepo.GetByID(ctx, tt.TenantID)
-	if tErr != nil {
-		return nil, tErr
-	}
-	if t.Status != domain.TenantActive {
-		return nil, errors.New("tenant not active")
-	}
-	db, dbErr := pool.Get(ctx, t.ID, t.DSN())
-	if dbErr != nil {
-		return nil, dbErr
-	}
-	return &domain.AuthInfo{
-		TenantID: tt.TenantID,
-		TenantDB: db,
-	}, nil
-}
-
 func AuthFromContext(ctx context.Context) *domain.AuthInfo {
 	info, _ := ctx.Value(authInfoKey).(*domain.AuthInfo)
 	return info
-}
-
-func extractBearerToken(r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	if h == "" {
-		return ""
-	}
-	parts := strings.SplitN(h, " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
-		return ""
-	}
-	return strings.TrimSpace(parts[1])
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
