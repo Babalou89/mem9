@@ -18,6 +18,8 @@ type memoryRepoMock struct {
 	setStateCalls []setStateCall  // track SetState invocations
 	setStateErr   error           // configurable return value for SetState
 	vectorResults []domain.Memory // configurable results for AutoVectorSearch
+	ftsResults    []domain.Memory // configurable results for FTSSearch
+	ftsAvail      bool            // configurable FTSAvailable() return
 }
 
 type setStateCall struct {
@@ -83,8 +85,13 @@ func (m *memoryRepoMock) KeywordSearch(ctx context.Context, query string, f doma
 }
 
 func (m *memoryRepoMock) FTSSearch(ctx context.Context, query string, f domain.MemoryFilter, limit int) ([]domain.Memory, error) {
+	if m.ftsResults != nil {
+		return m.ftsResults, nil
+	}
 	return nil, nil
 }
+
+func (m *memoryRepoMock) FTSAvailable() bool { return m.ftsAvail }
 
 func (m *memoryRepoMock) ListBootstrap(ctx context.Context, limit int) ([]domain.Memory, error) {
 	return nil, nil
@@ -288,7 +295,7 @@ func TestParseIntID(t *testing.T) {
 func TestIngestEmptyMessages(t *testing.T) {
 	t.Parallel()
 
-	svc := NewIngestService(&memoryRepoMock{}, nil, nil, "", ModeSmart, false)
+	svc := NewIngestService(&memoryRepoMock{}, nil, nil, "", ModeSmart)
 	_, err := svc.Ingest(context.Background(), "agent-1", IngestRequest{})
 	if err == nil {
 		t.Fatalf("expected validation error")
@@ -306,7 +313,7 @@ func TestIngestModeRawStoresInsight(t *testing.T) {
 	t.Parallel()
 
 	memRepo := &memoryRepoMock{}
-	svc := NewIngestService(memRepo, nil, nil, "", ModeSmart, false)
+	svc := NewIngestService(memRepo, nil, nil, "", ModeSmart)
 
 	req := IngestRequest{
 		Mode:      ModeRaw,
@@ -346,7 +353,7 @@ func TestIngestNilLLMFallsBackToRaw(t *testing.T) {
 	t.Parallel()
 
 	memRepo := &memoryRepoMock{}
-	svc := NewIngestService(memRepo, nil, nil, "", ModeSmart, false)
+	svc := NewIngestService(memRepo, nil, nil, "", ModeSmart)
 
 	req := IngestRequest{
 		Mode:      ModeSmart,
@@ -412,7 +419,7 @@ func TestReconcileDeleteErrNotFoundIsNotWarning(t *testing.T) {
 		},
 	}
 
-	svc := NewIngestService(memRepo, llmClient, nil, "auto-model", ModeSmart, false)
+	svc := NewIngestService(memRepo, llmClient, nil, "auto-model", ModeSmart)
 
 	res, err := svc.Ingest(context.Background(), "agent-1", IngestRequest{
 		Mode:      ModeSmart,
@@ -483,7 +490,7 @@ func TestReconcileDeleteRealErrorCountsAsWarning(t *testing.T) {
 		},
 	}
 
-	svc := NewIngestService(memRepo, llmClient, nil, "auto-model", ModeSmart, false)
+	svc := NewIngestService(memRepo, llmClient, nil, "auto-model", ModeSmart)
 
 	res, err := svc.Ingest(context.Background(), "agent-1", IngestRequest{
 		Mode:      ModeSmart,
@@ -510,7 +517,7 @@ func TestReconcileDeleteRealErrorCountsAsWarning(t *testing.T) {
 func TestIngestInvalidModeReturnsValidationError(t *testing.T) {
 	t.Parallel()
 
-	svc := NewIngestService(&memoryRepoMock{}, nil, nil, "", ModeSmart, false)
+	svc := NewIngestService(&memoryRepoMock{}, nil, nil, "", ModeSmart)
 	_, err := svc.Ingest(context.Background(), "agent-1", IngestRequest{
 		Mode:     IngestMode("unknown"),
 		Messages: []IngestMessage{{Role: "user", Content: "hello"}},
@@ -597,7 +604,7 @@ func TestReconcileFallbackWritesNothing(t *testing.T) {
 		},
 	}
 
-	svc := NewIngestService(memRepo, llmClient, nil, "auto-model", ModeSmart, false)
+	svc := NewIngestService(memRepo, llmClient, nil, "auto-model", ModeSmart)
 
 	res, err := svc.Ingest(context.Background(), "agent-1", IngestRequest{
 		Mode:      ModeSmart,
@@ -641,7 +648,7 @@ func TestGatherExistingMemoriesFiltersLowScoreVectorResults(t *testing.T) {
 		},
 	}
 
-	svc := NewIngestService(memRepo, nil, nil, "auto-model", ModeSmart, false)
+	svc := NewIngestService(memRepo, nil, nil, "auto-model", ModeSmart)
 
 	result := svc.gatherExistingMemories(context.Background(), "agent-1", []string{"test fact"})
 
@@ -651,5 +658,73 @@ func TestGatherExistingMemoriesFiltersLowScoreVectorResults(t *testing.T) {
 	}
 	if result[0].ID != "high-relevance" {
 		t.Fatalf("expected high-relevance memory, got %s", result[0].ID)
+	}
+}
+
+// TestGatherExistingMemoriesFTSOnlyMode verifies that when no embedder and no
+// autoModel are configured but FTS is available, gatherExistingMemories runs
+// per-fact FTS search instead of falling back to List().
+func TestGatherExistingMemoriesFTSOnlyMode(t *testing.T) {
+	t.Parallel()
+
+	memRepo := &memoryRepoMock{
+		ftsAvail: true,
+		ftsResults: []domain.Memory{
+			{ID: "fts-1", Content: "user likes Go", MemoryType: domain.TypeInsight, State: domain.StateActive},
+			{ID: "fts-2", Content: "user uses TiDB", MemoryType: domain.TypeInsight, State: domain.StateActive},
+		},
+	}
+
+	// No embedder, no autoModel — FTS-only deployment.
+	svc := NewIngestService(memRepo, nil, nil, "", ModeSmart)
+
+	result := svc.gatherExistingMemories(context.Background(), "agent-1", []string{"Go programming", "TiDB database"})
+
+	// FTS results should appear (2 unique memories, returned for both facts but deduped).
+	if len(result) != 2 {
+		t.Fatalf("expected 2 memories from FTS-only mode, got %d", len(result))
+	}
+	// Verify both FTS results are present.
+	ids := map[string]bool{}
+	for _, m := range result {
+		ids[m.ID] = true
+	}
+	if !ids["fts-1"] || !ids["fts-2"] {
+		t.Fatalf("expected fts-1 and fts-2, got %v", ids)
+	}
+}
+
+// TestGatherExistingMemoriesHybridDedup verifies that overlapping vector and
+// FTS results are deduplicated (same ID appears only once).
+func TestGatherExistingMemoriesHybridDedup(t *testing.T) {
+	t.Parallel()
+
+	highScore := 0.8
+	memRepo := &memoryRepoMock{
+		ftsAvail: true,
+		vectorResults: []domain.Memory{
+			{ID: "shared-1", Content: "user prefers dark mode", MemoryType: domain.TypeInsight, State: domain.StateActive, Score: &highScore},
+			{ID: "vec-only", Content: "user is a backend engineer", MemoryType: domain.TypeInsight, State: domain.StateActive, Score: &highScore},
+		},
+		ftsResults: []domain.Memory{
+			{ID: "shared-1", Content: "user prefers dark mode", MemoryType: domain.TypeInsight, State: domain.StateActive},
+			{ID: "fts-only", Content: "uses Go 1.22", MemoryType: domain.TypeInsight, State: domain.StateActive},
+		},
+	}
+
+	svc := NewIngestService(memRepo, nil, nil, "auto-model", ModeSmart)
+
+	result := svc.gatherExistingMemories(context.Background(), "agent-1", []string{"dark mode preference"})
+
+	// shared-1 should appear once (deduped), vec-only and fts-only each once = 3 total.
+	if len(result) != 3 {
+		t.Fatalf("expected 3 deduplicated memories, got %d", len(result))
+	}
+	ids := map[string]bool{}
+	for _, m := range result {
+		ids[m.ID] = true
+	}
+	if !ids["shared-1"] || !ids["vec-only"] || !ids["fts-only"] {
+		t.Fatalf("expected shared-1, vec-only, fts-only; got %v", ids)
 	}
 }

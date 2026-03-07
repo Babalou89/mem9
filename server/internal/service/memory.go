@@ -22,14 +22,13 @@ const (
 )
 
 type MemoryService struct {
-	memories     repository.MemoryRepo
-	embedder     *embed.Embedder
-	autoModel    string
-	ftsAvailable bool
+	memories  repository.MemoryRepo
+	embedder  *embed.Embedder
+	autoModel string
 }
 
-func NewMemoryService(memories repository.MemoryRepo, embedder *embed.Embedder, autoModel string, ftsAvailable bool) *MemoryService {
-	return &MemoryService{memories: memories, embedder: embedder, autoModel: autoModel, ftsAvailable: ftsAvailable}
+func NewMemoryService(memories repository.MemoryRepo, embedder *embed.Embedder, autoModel string) *MemoryService {
+	return &MemoryService{memories: memories, embedder: embedder, autoModel: autoModel}
 }
 
 func (s *MemoryService) Create(ctx context.Context, agentName, content string, tags []string, metadata json.RawMessage) (*domain.Memory, error) {
@@ -83,7 +82,7 @@ func (s *MemoryService) Search(ctx context.Context, filter domain.MemoryFilter) 
 	if s.embedder != nil {
 		return s.hybridSearch(ctx, filter)
 	}
-	if s.ftsAvailable {
+	if s.memories.FTSAvailable() {
 		return s.ftsOnlySearch(ctx, filter)
 	}
 	return s.memories.List(ctx, filter)
@@ -149,7 +148,7 @@ func (s *MemoryService) hybridSearch(ctx context.Context, filter domain.MemoryFi
 	queryVec, err := s.embedder.Embed(ctx, filter.Query)
 	if err != nil {
 		slog.Warn("embedding failed, falling back to keyword search", "err", err)
-		if s.ftsAvailable {
+		if s.memories.FTSAvailable() {
 			return s.ftsOnlySearch(ctx, filter)
 		}
 		return s.memories.List(ctx, filter)
@@ -163,7 +162,7 @@ func (s *MemoryService) hybridSearch(ctx context.Context, filter domain.MemoryFi
 
 	var kwResults []domain.Memory
 	var kwErr error
-	if s.ftsAvailable {
+	if s.memories.FTSAvailable() {
 		kwResults, kwErr = s.memories.FTSSearch(ctx, filter.Query, filter, fetchLimit)
 		if kwErr != nil {
 			slog.Warn("keyword leg skipped", "err", kwErr)
@@ -210,7 +209,7 @@ func (s *MemoryService) autoHybridSearch(ctx context.Context, filter domain.Memo
 
 	var kwResults []domain.Memory
 	var kwErr error
-	if s.ftsAvailable {
+	if s.memories.FTSAvailable() {
 		kwResults, kwErr = s.memories.FTSSearch(ctx, filter.Query, filter, fetchLimit)
 		if kwErr != nil {
 			slog.Warn("keyword leg skipped", "err", kwErr)

@@ -51,12 +51,11 @@ type IngestResult struct {
 
 // IngestService orchestrates the two-phase smart memory pipeline.
 type IngestService struct {
-	memories     repository.MemoryRepo
-	llm          *llm.Client
-	embedder     *embed.Embedder
-	autoModel    string
-	mode         IngestMode
-	ftsAvailable bool
+	memories  repository.MemoryRepo
+	llm       *llm.Client
+	embedder  *embed.Embedder
+	autoModel string
+	mode      IngestMode
 }
 
 // NewIngestService creates a new IngestService.
@@ -66,18 +65,16 @@ func NewIngestService(
 	embedder *embed.Embedder,
 	autoModel string,
 	defaultMode IngestMode,
-	ftsAvailable bool,
 ) *IngestService {
 	if defaultMode == "" {
 		defaultMode = ModeSmart
 	}
 	return &IngestService{
-		memories:     memories,
-		llm:          llmClient,
-		embedder:     embedder,
-		autoModel:    autoModel,
-		mode:         defaultMode,
-		ftsAvailable: ftsAvailable,
+		memories:  memories,
+		llm:       llmClient,
+		embedder:  embedder,
+		autoModel: autoModel,
+		mode:      defaultMode,
 	}
 }
 
@@ -506,7 +503,36 @@ func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID stri
 		AgentID:    agentID,
 	}
 
+	// No vector search available — degrade gracefully.
 	if s.embedder == nil && s.autoModel == "" {
+		if s.memories.FTSAvailable() {
+			// FTS-only deployment: run per-fact FTS search (leg 2 only).
+			seen := make(map[string]struct{})
+			var result []domain.Memory
+			addUnseen := func(matches []domain.Memory) {
+				for _, m := range matches {
+					if _, ok := seen[m.ID]; ok {
+						continue
+					}
+					seen[m.ID] = struct{}{}
+					m.Content = truncateRunes(m.Content, contentMaxLen)
+					result = append(result, m)
+				}
+			}
+			for _, fact := range facts {
+				kwMatches, kwErr := s.memories.FTSSearch(ctx, fact, filter, perFactLimit)
+				if kwErr != nil {
+					slog.Warn("FTS search failed during reconcile (FTS-only mode)", "err", kwErr)
+					continue
+				}
+				addUnseen(kwMatches)
+			}
+			if len(result) > maxExistingMemories {
+				result = result[:maxExistingMemories]
+			}
+			return result
+		}
+		// No vector, no FTS — fall back to List().
 		filter.Limit = perFactLimit * len(facts)
 		if filter.Limit > maxExistingMemories {
 			filter.Limit = maxExistingMemories
@@ -562,7 +588,7 @@ func (s *IngestService) gatherExistingMemories(ctx context.Context, agentID stri
 		// Leg 2: FTS / keyword search — catches exact terms that vector search may miss.
 		var kwMatches []domain.Memory
 		var kwErr error
-		if s.ftsAvailable {
+		if s.memories.FTSAvailable() {
 			kwMatches, kwErr = s.memories.FTSSearch(ctx, fact, filter, perFactLimit)
 		} else {
 			kwMatches, kwErr = s.memories.KeywordSearch(ctx, fact, filter, perFactLimit)

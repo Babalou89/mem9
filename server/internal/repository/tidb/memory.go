@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -17,13 +18,19 @@ import (
 type MemoryRepo struct {
 	db           *sql.DB
 	autoModel    string
-	ftsAvailable bool
+	ftsAvailable atomic.Bool
 }
 
 func NewMemoryRepo(db *sql.DB, autoModel string) *MemoryRepo {
 	r := &MemoryRepo{db: db, autoModel: autoModel}
-	ensureFTSIndex(db)
-	r.ftsAvailable = probeFTS(db)
+	// Run FTS index creation + probe in the background so the first HTTP
+	// request for this tenant is not blocked by DDL or retry loops.
+	go func() {
+		ensureFTSIndex(db)
+		if probeFTS(db) {
+			r.ftsAvailable.Store(true)
+		}
+	}()
 	return r
 }
 
@@ -74,7 +81,7 @@ func probeFTS(db *sql.DB) bool {
 	return false
 }
 
-func (r *MemoryRepo) FTSAvailable() bool { return r.ftsAvailable }
+func (r *MemoryRepo) FTSAvailable() bool { return r.ftsAvailable.Load() }
 
 const allColumns = `id, content, source, tags, metadata, embedding, memory_type, agent_id, session_id, state, version, updated_by, created_at, updated_at, superseded_by`
 
