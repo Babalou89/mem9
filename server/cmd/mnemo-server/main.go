@@ -87,7 +87,7 @@ func main() {
 	rateMW := rl.Middleware()
 
 	// Handler.
-	srv := handler.NewServer(tenantSvc, uploadTaskRepo, embedder, llmClient, cfg.EmbedAutoModel, service.IngestMode(cfg.IngestMode), logger)
+	srv := handler.NewServer(tenantSvc, uploadTaskRepo, cfg.UploadDir, embedder, llmClient, cfg.EmbedAutoModel, service.IngestMode(cfg.IngestMode), logger)
 	router := srv.Router(tenantMW, rateMW)
 
 	httpSrv := &http.Server{

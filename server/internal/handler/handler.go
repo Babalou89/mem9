@@ -25,6 +25,7 @@ import (
 type Server struct {
 	tenant      *service.TenantService
 	uploadTasks repository.UploadTaskRepo
+	uploadDir   string
 	// Dependencies for creating tenant-mode services on-the-fly.
 	embedder   *embed.Embedder
 	llmClient  *llm.Client
@@ -38,6 +39,7 @@ type Server struct {
 func NewServer(
 	tenantSvc *service.TenantService,
 	uploadTasks repository.UploadTaskRepo,
+	uploadDir string,
 	embedder *embed.Embedder,
 	llmClient *llm.Client,
 	autoModel string,
@@ -47,6 +49,7 @@ func NewServer(
 	return &Server{
 		tenant:      tenantSvc,
 		uploadTasks: uploadTasks,
+		uploadDir:   uploadDir,
 		embedder:    embedder,
 		llmClient:   llmClient,
 		autoModel:   autoModel,
@@ -124,9 +127,10 @@ func (s *Server) Router(tenantMW, rateLimitMW func(http.Handler) http.Handler) h
 		r.Delete("/memories/{id}", s.deleteMemory)
 		r.Post("/memories/ingest", s.ingestMemories)
 
-		// File upload (async ingest).
-		r.Post("/memories/upload", s.uploadFile)
-		r.Get("/memories/upload/status", s.uploadStatus)
+		// Tasks (async file ingest).
+		r.Post("/tasks", s.createTask)
+		r.Get("/tasks", s.listTasks)
+		r.Get("/tasks/{id}", s.getTask)
 
 		// Tenant info.
 		r.Get("/info", s.getTenantInfo)
