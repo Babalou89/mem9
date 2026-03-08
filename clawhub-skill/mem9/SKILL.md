@@ -163,9 +163,18 @@ When explaining it to the user, say:
 
 `[AGENT]`
 
+If this is the default profile.
+
 ```bash
-openclaw plugins install @mem9/mem9
+openclaw plugins install /home/you06/.openclaw/workspace-ai_research/mnemos/openclaw-plugin
 ```
+
+Otherwise, install the plugin to the current profile.
+
+```bash
+openclaw --profile {current_profile} plugins install /home/you06/.openclaw/workspace-ai_research/mnemos/openclaw-plugin
+```
+
 
 ### Step 3 — Detect OpenClaw version
 
