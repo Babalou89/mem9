@@ -87,16 +87,11 @@ curl -sX POST https://api.mem9.ai/v1alpha1/mem9s | jq .
 Response:
 ```json
 {
-  "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "claim_url": "https://...",
-  "expires_at": "2026-04-07T00:00:00Z"
+  "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 }
 ```
 
 Save `id` as `TENANT_ID`.
-
-`[HUMAN]` **Claim your tenant**: Open `claim_url` in browser **before** `expires_at`.
-Unclaimed tenants are destroyed at expiry. There is no renewal API.
 
 ### Step 2 — Install plugin
 

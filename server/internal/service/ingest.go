@@ -224,6 +224,10 @@ func (s *IngestService) ingestRaw(ctx context.Context, agentName string, req Ing
 		return &IngestResult{Status: "complete"}, nil
 	}
 
+	// Cap content size to avoid exceeding DB column limits.
+	const maxRawContentRunes = 200000
+	content = truncateRunes(content, maxRawContentRunes)
+
 	var embedding []float32
 	if s.autoModel == "" && s.embedder != nil {
 		var err error

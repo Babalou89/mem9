@@ -9,7 +9,7 @@
 vendor/
 
 # Binary output
-server/mnemo-server
+server/bin
 
 # IDE
 .idea/

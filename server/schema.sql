@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS tenant_tokens (
 -- Tenant data plane schema (per-tenant TiDB Serverless).
 CREATE TABLE IF NOT EXISTS memories (
   id              VARCHAR(36)     PRIMARY KEY,
-  content         TEXT            NOT NULL,
+  content         MEDIUMTEXT      NOT NULL,
   source          VARCHAR(100),
   tags            JSON,
   metadata        JSON,
