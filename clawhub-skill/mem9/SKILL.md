@@ -108,8 +108,6 @@ If the user asks "What is the relationship between tenantID and key?" answer pla
 `[AGENT]` Ask the user before doing anything else:
 
 > Do you already have a mem9 space ID from a previous install or another machine?
->
-> After this question, the gateway will restart to apply the mem9 plugin. Please wait a few minutes and send a message to confirm the mem9 is working.
 
 **If yes** — ask the user to paste the ID, save it as `SPACE_ID`, then skip to Step 2.
 
@@ -163,18 +161,31 @@ When explaining it to the user, say:
 
 `[AGENT]`
 
+Important: install the plugin but don't restart the gateway by now, you'll receive the gateway restart notice later.
+
 If this is the default profile.
 
 ```bash
-openclaw plugins install /home/you06/.openclaw/workspace-ai_research/mnemos/openclaw-plugin
+openclaw plugins install @mem9/mem9
 ```
 
 Otherwise, install the plugin to the current profile.
 
 ```bash
-openclaw --profile {current_profile} plugins install /home/you06/.openclaw/workspace-ai_research/mnemos/openclaw-plugin
+openclaw --profile {current_profile} plugins install @mem9/mem9
 ```
 
+**Immediately after install completes**, tell the user (before restarting anything):
+
+> ✅ mem9 plugin installed. Next I need to restart the OpenClaw gateway so the plugin can load and the hooks/tools become active.
+>
+> The restart will take about 1 minute. After that, send me a message to confirm mem9 is functional.
+
+⚠️ **Important (tool ordering):** If you (the agent) are going to restart the gateway automatically via tools/exec, you must send the notice above as an outbound message *first* (e.g. via the `message` tool). Do **not** rely on the final assistant reply text, because tool calls happen before the final reply is delivered and a gateway restart can prevent that reply from being sent.
+
+Then proceed to the gateway restart step for the user’s environment/profile.
+
+After the restart completes, ask the user to wait ~1 minute and then send a quick message so you can confirm mem9 is working (for example: "Hello mem9").
 
 ### Step 3 — Detect OpenClaw version
 
