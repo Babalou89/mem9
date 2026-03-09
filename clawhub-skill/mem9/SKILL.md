@@ -1,6 +1,6 @@
 ---
 name: mem9
-version: 1.0.0
+version: 1.0.2
 description: |
   Persistent cloud memory for OpenClaw agents.
 
@@ -159,11 +159,25 @@ When explaining it to the user, say:
 
 ### Step 2 — Install plugin
 
-`[AGENT]`
+`[AGENT]` Detect npm registry reachability first. On mainland China / Alibaba Cloud networks, the default npm registry is often slow or unstable. Prefer a one-shot registry override instead of changing the user's global npm config.
 
 ```bash
-openclaw plugins install @mem9/mem9
+NPMJS_TIME="$(curl -o /dev/null -sS --connect-timeout 2 --max-time 6 -w '%{time_total}' https://registry.npmjs.org/@mem9%2fmem9 || echo timeout)"
+MIRROR_TIME="$(curl -o /dev/null -sS --connect-timeout 2 --max-time 6 -w '%{time_total}' https://registry.npmmirror.com/@mem9%2fmem9 || echo timeout)"
+
+if [ "$MIRROR_TIME" != "timeout" ] && { [ "$NPMJS_TIME" = "timeout" ] || awk "BEGIN { exit !($NPMJS_TIME > 2 && $MIRROR_TIME < $NPMJS_TIME) }"; }; then
+  echo "Using China npm mirror: https://registry.npmmirror.com"
+  NPM_CONFIG_REGISTRY=https://registry.npmmirror.com openclaw plugins install @mem9/mem9
+else
+  openclaw plugins install @mem9/mem9
+fi
 ```
+
+Decision rule:
+
+- If the official npm registry times out, but `npmmirror` is reachable, treat this as a China-optimized network path and use `https://registry.npmmirror.com`.
+- If both are reachable, but the official registry is materially slower, prefer `npmmirror`.
+- Do not run `npm config set registry ...` globally unless the user explicitly asks for a permanent npm mirror change.
 
 ### Step 3 — Detect OpenClaw version
 
@@ -411,6 +425,7 @@ When user says "import memories to mem9" without specifying files:
 | Symptom | Fix |
 |---------|-----|
 | Plugin not loading | Check `slots.memory = "mem9"` and `entries.mem9.enabled = true` |
+| Plugin install hangs or fails on Alibaba Cloud / mainland China network | Re-run **Step 2** and let it switch to `NPM_CONFIG_REGISTRY=https://registry.npmmirror.com`; verify `curl -I https://registry.npmmirror.com/@mem9%2fmem9` succeeds |
 | `404` on API call | Verify the saved space ID was written into the plugin config; run `curl https://api.mem9.ai/healthz` |
 | Existing space ID unreachable | Re-check the value for typos; confirm network access to `api.mem9.ai`; if ID is lost, provision a new space via Step 1 |
 ---
