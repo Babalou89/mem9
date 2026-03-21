@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildMemoryPulseData } from "./memory-pulse";
 import type { AnalysisJobSnapshotResponse } from "@/types/analysis";
 import type { Memory, MemoryStats } from "@/types/memory";
+
+const FIXED_NOW = new Date("2026-03-21T12:00:00Z");
 
 function createMemory(overrides: Partial<Memory> = {}): Memory {
   return {
@@ -80,8 +82,17 @@ function createSnapshot(): AnalysisJobSnapshotResponse {
   };
 }
 
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(FIXED_NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("memory pulse helpers", () => {
-  it("builds composition and tag signals from analysis data", () => {
+  it("prefers local memory tags for clickable signal stack filters", () => {
     const data = buildMemoryPulseData({
       stats: createStats(),
       memories: [
@@ -101,12 +112,89 @@ describe("memory pulse helpers", () => {
     expect(data.composition.outer).toHaveLength(2);
     expect(data.composition.outer[0]?.key).toBe("pinned");
     expect(data.composition.innerKind).toBe("analysis");
+    expect(data.signals.source).toBe("memory");
+    expect(data.signals.items[0]).toEqual({
+      value: "project",
+      count: 3,
+      ratio: 1,
+    });
+  });
+
+  it("falls back to analysis tag stats when memories have no local tags", () => {
+    const data = buildMemoryPulseData({
+      stats: createStats(),
+      memories: [
+        createMemory({ id: "mem-1", tags: [] }),
+        createMemory({ id: "mem-2", tags: [] }),
+      ],
+      cards: [
+        { category: "identity", count: 2, confidence: 0.5 },
+      ],
+      snapshot: createSnapshot(),
+      range: "30d",
+    });
+
     expect(data.signals.source).toBe("analysis");
     expect(data.signals.items[0]).toEqual({
       value: "project",
       count: 3,
       ratio: 1,
     });
+  });
+
+  it("builds the all-time window from created_at timestamps", () => {
+    const data = buildMemoryPulseData({
+      stats: createStats({ total: 2, pinned: 1, insight: 1 }),
+      memories: [
+        createMemory({
+          id: "mem-early",
+          created_at: "2026-03-01T12:00:00Z",
+          updated_at: "2026-03-20T12:00:00Z",
+        }),
+        createMemory({
+          id: "mem-late",
+          created_at: "2026-03-10T12:00:00Z",
+          updated_at: "2026-03-02T12:00:00Z",
+        }),
+      ],
+      cards: [],
+      snapshot: null,
+      range: "all",
+    });
+
+    expect(data.trend.buckets).toHaveLength(12);
+    expect(data.trend.buckets[0]?.start).toBe(
+      Date.parse("2026-03-01T12:00:00Z"),
+    );
+    expect(data.trend.buckets[data.trend.buckets.length - 1]?.end).toBe(
+      Date.parse("2026-03-10T12:00:00Z"),
+    );
+  });
+
+  it("counts created_at entries inside a range even when updated_at falls outside it", () => {
+    const data = buildMemoryPulseData({
+      stats: createStats({ total: 2, pinned: 1, insight: 1 }),
+      memories: [
+        createMemory({
+          id: "mem-created-recent",
+          created_at: "2026-03-19T12:00:00Z",
+          updated_at: "2026-03-01T12:00:00Z",
+        }),
+        createMemory({
+          id: "mem-created-recent-two",
+          created_at: "2026-03-18T12:00:00Z",
+          updated_at: "2026-03-20T12:00:00Z",
+        }),
+      ],
+      cards: [],
+      snapshot: null,
+      range: "7d",
+    });
+
+    expect(
+      data.trend.buckets.reduce((sum, bucket) => sum + bucket.count, 0),
+    ).toBe(2);
+    expect(data.trend.maxCount).toBeGreaterThanOrEqual(1);
   });
 
   it("falls back to facet composition and local tag counts", () => {

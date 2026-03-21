@@ -212,6 +212,7 @@
     "cards": "聚合卡片",
     "summary": "摘要",
     "top_topics": "高频主题",
+    "top_topics_hint": "主题计数来自聚合分析信号，当前不支持直接点击筛选。",
     "top_tags": "高频标签",
     "more": "更多",
     "less": "收起",
@@ -275,7 +276,13 @@
     "rhythm": {
       "title": "节奏",
       "caption": "当前时间范围内的记忆活跃度",
-      "empty": "当前还没有足够的活跃度形成脉冲。"
+      "timeline_badge": "时间轴",
+      "helper": "点击任意时间条，可按创建时间筛选记忆。",
+      "selected_hint": "时间轴筛选已生效。再次点击同一个时间条，或在这里清除。",
+      "selected_range": "当前筛选：{{range}}",
+      "clear": "清除时间轴筛选",
+      "empty": "当前还没有足够的活跃度形成脉冲。",
+      "bucket_label": "{{range}}，{{count}} 条记忆"
     },
     "composition": {
       "title": "组成",

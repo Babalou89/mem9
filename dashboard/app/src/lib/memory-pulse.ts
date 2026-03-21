@@ -90,7 +90,7 @@ function getWindow(range: TimeRangePreset, memories: Memory[]): {
   end: number;
 } | null {
   const timestamps = memories
-    .map((memory) => parseTimestamp(memory.updated_at))
+    .map((memory) => parseTimestamp(memory.created_at))
     .filter((value): value is number => value !== null)
     .sort((left, right) => left - right);
 
@@ -130,7 +130,7 @@ export function buildPulseTrend(
   const counts = Array.from({ length: bucketCount }, () => 0);
 
   for (const memory of memories) {
-    const timestamp = parseTimestamp(memory.updated_at);
+    const timestamp = parseTimestamp(memory.created_at);
     if (timestamp === null || timestamp < window.start || timestamp > window.end) {
       continue;
     }
@@ -310,19 +310,19 @@ export function buildPulseSignals(
   memories: Memory[],
   limit = 5,
 ): MemoryPulseData["signals"] {
-  const fromSnapshot = buildSignalItemsFromStats(getSnapshotTagStats(snapshot), limit);
-  if (fromSnapshot.length > 0) {
-    return {
-      items: fromSnapshot,
-      source: "analysis",
-    };
-  }
-
   const fromMemories = buildSignalItemsFromMemories(memories, limit);
   if (fromMemories.length > 0) {
     return {
       items: fromMemories,
       source: "memory",
+    };
+  }
+
+  const fromSnapshot = buildSignalItemsFromStats(getSnapshotTagStats(snapshot), limit);
+  if (fromSnapshot.length > 0) {
+    return {
+      items: fromSnapshot,
+      source: "analysis",
     };
   }
 
