@@ -1,7 +1,13 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import "@/i18n";
-import { MemoryInsightOverview } from "./memory-insight-overview";
+import {
+  getRootRelationAnimationBudget,
+  getRootRelationEffectiveDpr,
+  getRootRelationHighlightLength,
+  MemoryInsightOverview,
+  sampleBezierPath,
+} from "./memory-insight-overview";
 import {
   buildInsightEntityNodeId,
   buildInsightMemoryNodeId,
@@ -9,6 +15,95 @@ import {
 } from "@/lib/memory-insight";
 import type { AnalysisCategoryCard, MemoryAnalysisMatch } from "@/types/analysis";
 import type { Memory } from "@/types/memory";
+
+const defaultMatchMediaImplementation = (query: string) => ({
+  matches: false,
+  media: query,
+  onchange: null,
+  addEventListener: vi.fn(),
+  removeEventListener: vi.fn(),
+  addListener: vi.fn(),
+  removeListener: vi.fn(),
+  dispatchEvent: vi.fn(),
+});
+
+describe("memory insight overview canvas helpers", () => {
+  it("selects animation budgets by edge density and reduced motion", () => {
+    expect(getRootRelationAnimationBudget(0, false)).toBe(0);
+    expect(getRootRelationAnimationBudget(18, false)).toBe(8);
+    expect(getRootRelationAnimationBudget(48, false)).toBe(6);
+    expect(getRootRelationAnimationBudget(72, false)).toBe(4);
+    expect(getRootRelationAnimationBudget(18, true)).toBe(0);
+  });
+
+  it("caps effective canvas dpr for normal and dense scenes", () => {
+    expect(getRootRelationEffectiveDpr(24, 2)).toBe(1.5);
+    expect(getRootRelationEffectiveDpr(70, 2)).toBe(1.25);
+    expect(getRootRelationEffectiveDpr(24, 1)).toBe(1);
+  });
+
+  it("clamps highlight length and samples curved bezier paths", () => {
+    expect(getRootRelationHighlightLength(80)).toBeCloseTo(24, 3);
+    expect(getRootRelationHighlightLength(280)).toBeCloseTo(39.2, 3);
+    expect(getRootRelationHighlightLength(900)).toBeCloseTo(72, 3);
+
+    const sampled = sampleBezierPath({
+      sourceX: 0,
+      sourceY: 0,
+      controlX: 80,
+      controlY: 120,
+      targetX: 160,
+      targetY: 0,
+      dist: 180,
+    });
+
+    expect(sampled.points.length).toBeGreaterThan(10);
+    expect(sampled.length).toBeGreaterThan(160);
+    expect(sampled.points[0]).toMatchObject({ x: 0, y: 0, distance: 0 });
+    expect(sampled.points[sampled.points.length - 1]).toMatchObject({ x: 160, y: 0 });
+  });
+});
+const matchMediaMock = vi.fn(defaultMatchMediaImplementation);
+
+Object.defineProperty(window, "matchMedia", {
+  writable: true,
+  value: matchMediaMock,
+});
+
+const createGradientMock = () => ({
+  addColorStop: vi.fn(),
+});
+const canvasContextMock = {
+  save: vi.fn(),
+  restore: vi.fn(),
+  clearRect: vi.fn(),
+  setTransform: vi.fn(),
+  createLinearGradient: vi.fn(createGradientMock),
+  createRadialGradient: vi.fn(createGradientMock),
+  beginPath: vi.fn(),
+  moveTo: vi.fn(),
+  lineTo: vi.fn(),
+  stroke: vi.fn(),
+  fill: vi.fn(),
+  arc: vi.fn(),
+  lineCap: "round",
+  lineJoin: "round",
+  strokeStyle: "",
+  fillStyle: "",
+  lineWidth: 1,
+  globalAlpha: 1,
+  shadowColor: "",
+  shadowBlur: 0,
+} as unknown as CanvasRenderingContext2D;
+
+Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
+  configurable: true,
+  value: vi.fn(() => canvasContextMock),
+});
+
+afterEach(() => {
+  matchMediaMock.mockImplementation(defaultMatchMediaImplementation);
+});
 
 function createMemory(id: string, content: string, tags: string[]): Memory {
   return {
@@ -53,6 +148,47 @@ function renderInsight({
       onMemorySelect={onMemorySelect}
     />,
   );
+}
+
+function createDenseRootRelationFixture(): {
+  cards: AnalysisCategoryCard[];
+  memories: Memory[];
+  matchMap: Map<string, MemoryAnalysisMatch>;
+} {
+  const categories = [
+    "project",
+    "task",
+    "artifact",
+    "profile",
+    "plan",
+    "policy",
+    "learning",
+    "health",
+    "decision",
+    "automation",
+    "privacy",
+    "debugging",
+  ];
+  const cards: AnalysisCategoryCard[] = categories.map((category) => ({
+    category,
+    count: 12,
+    confidence: 1,
+  }));
+  const categoryScores = Object.fromEntries(categories.map((category) => [category, 1]));
+  const memories = Array.from({ length: 12 }, (_, index) =>
+    createMemory(`dense-${index}`, `Dense memory ${index}`, [`shared-${index}`]));
+  const matchMap = new Map<string, MemoryAnalysisMatch>(
+    memories.map((memory) => [
+      memory.id,
+      {
+        memoryId: memory.id,
+        categories,
+        categoryScores,
+      },
+    ]),
+  );
+
+  return { cards, memories, matchMap };
 }
 
 describe("MemoryInsightOverview", () => {
@@ -238,6 +374,52 @@ describe("MemoryInsightOverview", () => {
         .getAllByRole("button")
         .map((button) => button.textContent?.trim()),
     ).toEqual(["Fullscreen", "Reset layout", "Fit view"]);
+  });
+
+  it("keeps a nonzero animation budget and renders canvases in dense root-relation scenes", () => {
+    const { cards, memories, matchMap } = createDenseRootRelationFixture();
+
+    renderInsight({ cards, memories, matchMap });
+
+    const overview = screen.getByTestId("memory-insight-overview");
+    expect(overview).toHaveAttribute("data-edge-layer", "canvas");
+    expect(overview).toHaveAttribute("data-animation-budget", "4");
+    expect(Number.parseFloat(overview.getAttribute("data-effective-dpr") ?? "0")).toBeLessThanOrEqual(1.25);
+    expect(screen.getByTestId("memory-insight-base-canvas")).toBeInTheDocument();
+    expect(screen.getByTestId("memory-insight-fx-canvas")).toBeInTheDocument();
+    expect(overview.querySelectorAll(".insight-synapse-flow")).toHaveLength(0);
+  });
+
+  it("prioritizes incident strong edges when hovering a root bubble", () => {
+    const { cards, memories, matchMap } = createDenseRootRelationFixture();
+
+    renderInsight({ cards, memories, matchMap });
+
+    fireEvent.pointerEnter(screen.getByTestId("insight-node-card:project"));
+
+    const animatedEdgeIds = screen
+      .getByTestId("memory-insight-overview")
+      .getAttribute("data-animated-edge-ids")
+      ?.split(",")
+      .filter(Boolean);
+
+    expect(animatedEdgeIds).toBeDefined();
+    expect(animatedEdgeIds).not.toHaveLength(0);
+    expect(animatedEdgeIds?.every((edgeId) => edgeId.includes("card:project"))).toBe(true);
+  });
+
+  it("sets the animation budget to zero when reduced motion is requested", () => {
+    matchMediaMock.mockImplementation((query: string) => ({
+      ...defaultMatchMediaImplementation(query),
+      matches: query.includes("prefers-reduced-motion"),
+    }));
+    const { cards, memories, matchMap } = createDenseRootRelationFixture();
+
+    renderInsight({ cards, memories, matchMap });
+
+    const overview = screen.getByTestId("memory-insight-overview");
+    expect(overview).toHaveAttribute("data-performance-mode", "reduced");
+    expect(overview).toHaveAttribute("data-animation-budget", "0");
   });
 
   it("makes low-memory bubbles much smaller than dominant categories", () => {

@@ -304,8 +304,7 @@ h4 {
     opacity 300ms ease,
     transform 300ms ease,
     filter 300ms ease;
-  animation: insight-bubble-halo-pulse var(--insight-twinkle-duration, 5.1s) ease-in-out infinite;
-  animation-delay: var(--insight-twinkle-delay, 0s);
+  animation: none;
 }
 
 .memory-insight-bubble-core::after {
@@ -332,8 +331,7 @@ h4 {
     box-shadow 260ms ease,
     filter 260ms ease,
     background 260ms ease;
-  animation: insight-bubble-sheen var(--insight-twinkle-duration, 5.1s) ease-in-out infinite;
-  animation-delay: var(--insight-twinkle-delay, 0s);
+  animation: none;
 }
 
 .memory-insight-bubble-label {
@@ -470,6 +468,63 @@ h4 {
 .memory-insight-bubble[data-dragging="true"] .memory-insight-bubble-motion {
   animation: none;
   transform: none;
+}
+
+.memory-insight-bubble[data-performance-mode="reduced"] .memory-insight-bubble-core {
+  will-change: transform;
+  transition:
+    transform 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.memory-insight-bubble[data-performance-mode="reduced"] .memory-insight-bubble-motion {
+  animation: none;
+  transform: none;
+}
+
+.memory-insight-bubble[data-performance-mode="reduced"] .memory-insight-bubble-core::before {
+  inset: -8px;
+  opacity: 0.16;
+  transform: scale(1);
+  filter: blur(8px);
+}
+
+.memory-insight-bubble[data-performance-mode="reduced"] .memory-insight-bubble-halo {
+  animation: none;
+  opacity: 0.26;
+  transform: scale(0.96);
+  filter: blur(8px);
+}
+
+.memory-insight-bubble[data-performance-mode="reduced"] .memory-insight-bubble-visual {
+  animation: none;
+  will-change: auto;
+  filter: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.14),
+    0 0 12px color-mix(in srgb, var(--insight-bubble-color, var(--type-insight)) 12%, transparent);
+}
+
+.memory-insight-bubble[data-performance-mode="reduced"]:hover .memory-insight-bubble-core,
+.memory-insight-bubble[data-performance-mode="reduced"][data-active="true"] .memory-insight-bubble-core {
+  transform: scale(1.02);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--insight-bubble-color, var(--type-insight)) 14%, transparent);
+  filter: none;
+}
+
+.memory-insight-bubble[data-performance-mode="reduced"]:hover .memory-insight-bubble-visual,
+.memory-insight-bubble[data-performance-mode="reduced"][data-active="true"] .memory-insight-bubble-visual {
+  filter: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.16),
+    0 0 16px color-mix(in srgb, var(--insight-bubble-color, var(--type-insight)) 16%, transparent);
+}
+
+.memory-insight-bubble[data-performance-mode="reduced"]:hover .memory-insight-bubble-halo,
+.memory-insight-bubble[data-performance-mode="reduced"][data-active="true"] .memory-insight-bubble-halo {
+  opacity: 0.38;
+  transform: scale(1);
+  filter: blur(9px);
 }
 
 [data-testid^="insight-node-"].memory-insight-bubble>span.relative {

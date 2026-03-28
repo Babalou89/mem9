@@ -87,6 +87,8 @@ type PositionedNode = LaneRenderableItem & {
   muted?: boolean;
 };
 
+type InsightPerformanceMode = "full" | "reduced";
+
 type RootBubbleRelationEdge = {
   id: string;
   sourceId: string;
@@ -94,6 +96,34 @@ type RootBubbleRelationEdge = {
   sharedMemoryCount: number;
   sharedTagCount: number;
   strength: number;
+};
+
+type RootRelationRenderableEdge = RootBubbleRelationEdge & {
+  sourceX: number;
+  sourceY: number;
+  controlX: number;
+  controlY: number;
+  targetX: number;
+  targetY: number;
+  intensity: number;
+  strokeWidth: number;
+  opacity: number;
+  sourceColor: string;
+  targetColor: string;
+  strokeColor: string;
+  dist: number;
+};
+
+type SampledPathPoint = InsightPoint & {
+  distance: number;
+};
+
+type SampledRootRelationEdge = RootRelationRenderableEdge & {
+  sampledPath: SampledPathPoint[];
+  pathLength: number;
+  highlightLength: number;
+  cycleDurationMs: number;
+  animationOffsetMs: number;
 };
 
 const DRIFT_SEEDS = [
@@ -148,6 +178,24 @@ const LANE_GAP = {
   compact: 16,
   desktop: 24,
 } as const;
+
+const ROOT_RELATION_ANIMATION_BUDGET = {
+  sparse: 8,
+  medium: 6,
+  dense: 4,
+} as const;
+const ROOT_RELATION_MEDIUM_EDGE_THRESHOLD = 32;
+const ROOT_RELATION_DENSE_EDGE_THRESHOLD = 60;
+const ROOT_RELATION_BASE_DPR_CAP = 1.5;
+const ROOT_RELATION_DENSE_DPR_CAP = 1.25;
+const ROOT_RELATION_HIGHLIGHT_LENGTH_RATIO = 0.14;
+const ROOT_RELATION_HIGHLIGHT_LENGTH_MIN = 24;
+const ROOT_RELATION_HIGHLIGHT_LENGTH_MAX = 72;
+const ROOT_RELATION_CYCLE_DURATION_MS = {
+  min: 2800,
+  max: 5200,
+} as const;
+const REDUCED_MOTION_MEDIA_QUERY = "(prefers-reduced-motion: reduce)";
 
 function previewMemoryContent(memory: Memory): string {
   const normalizedContent = normalizeInlineText(memory.content);
@@ -262,6 +310,22 @@ function bubbleToneColor(category: string): string {
   ]!;
 }
 
+function mixHexColors(left: string, right: string, ratio = 0.5): string {
+  if (!/^#[\da-fA-F]{6}$/.test(left) || !/^#[\da-fA-F]{6}$/.test(right)) {
+    return left;
+  }
+
+  const mixChannel = (offset: number) => {
+    const leftValue = Number.parseInt(left.slice(offset, offset + 2), 16);
+    const rightValue = Number.parseInt(right.slice(offset, offset + 2), 16);
+    return Math.round(leftValue * (1 - ratio) + rightValue * ratio)
+      .toString(16)
+      .padStart(2, "0");
+  };
+
+  return `#${mixChannel(1)}${mixChannel(3)}${mixChannel(5)}`;
+}
+
 function bubbleSizeTier(diameter?: number): "small" | "medium" | "large" | undefined {
   if (typeof diameter !== "number") {
     return undefined;
@@ -280,6 +344,329 @@ function bubbleSizeTier(diameter?: number): "small" | "medium" | "large" | undef
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  if (!/^#[\da-fA-F]{6}$/.test(hex)) {
+    return `rgba(255, 255, 255, ${alpha})`;
+  }
+
+  const red = Number.parseInt(hex.slice(1, 3), 16);
+  const green = Number.parseInt(hex.slice(3, 5), 16);
+  const blue = Number.parseInt(hex.slice(5, 7), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+export function getRootRelationAnimationBudget(edgeCount: number, prefersReducedMotion: boolean): number {
+  if (prefersReducedMotion || edgeCount <= 0) {
+    return 0;
+  }
+
+  if (edgeCount > ROOT_RELATION_DENSE_EDGE_THRESHOLD) {
+    return ROOT_RELATION_ANIMATION_BUDGET.dense;
+  }
+
+  if (edgeCount > ROOT_RELATION_MEDIUM_EDGE_THRESHOLD) {
+    return ROOT_RELATION_ANIMATION_BUDGET.medium;
+  }
+
+  return ROOT_RELATION_ANIMATION_BUDGET.sparse;
+}
+
+export function getRootRelationEffectiveDpr(
+  edgeCount: number,
+  devicePixelRatio = typeof window === "undefined" ? 1 : window.devicePixelRatio || 1,
+): number {
+  const cap = edgeCount > ROOT_RELATION_DENSE_EDGE_THRESHOLD
+    ? ROOT_RELATION_DENSE_DPR_CAP
+    : ROOT_RELATION_BASE_DPR_CAP;
+  return clamp(devicePixelRatio, 1, cap);
+}
+
+export function getRootRelationHighlightLength(pathLength: number): number {
+  return clamp(
+    pathLength * ROOT_RELATION_HIGHLIGHT_LENGTH_RATIO,
+    ROOT_RELATION_HIGHLIGHT_LENGTH_MIN,
+    ROOT_RELATION_HIGHLIGHT_LENGTH_MAX,
+  );
+}
+
+function quadraticBezierPoint(
+  sourceX: number,
+  sourceY: number,
+  controlX: number,
+  controlY: number,
+  targetX: number,
+  targetY: number,
+  t: number,
+): InsightPoint {
+  const inverseT = 1 - t;
+  return {
+    x: inverseT * inverseT * sourceX + 2 * inverseT * t * controlX + t * t * targetX,
+    y: inverseT * inverseT * sourceY + 2 * inverseT * t * controlY + t * t * targetY,
+  };
+}
+
+export function sampleBezierPath(
+  edge: Pick<RootRelationRenderableEdge, "sourceX" | "sourceY" | "controlX" | "controlY" | "targetX" | "targetY" | "dist">,
+): { points: SampledPathPoint[]; length: number } {
+  const segments = clamp(Math.ceil(edge.dist / 14), 16, 48);
+  const points: SampledPathPoint[] = [];
+  let length = 0;
+  let previousPoint: InsightPoint | null = null;
+
+  for (let index = 0; index <= segments; index += 1) {
+    const point = quadraticBezierPoint(
+      edge.sourceX,
+      edge.sourceY,
+      edge.controlX,
+      edge.controlY,
+      edge.targetX,
+      edge.targetY,
+      index / segments,
+    );
+
+    if (previousPoint) {
+      const deltaX = point.x - previousPoint.x;
+      const deltaY = point.y - previousPoint.y;
+      length += Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    }
+
+    points.push({
+      ...point,
+      distance: length,
+    });
+    previousPoint = point;
+  }
+
+  return { points, length };
+}
+
+function pointAtDistance(
+  points: SampledPathPoint[],
+  distance: number,
+  totalLength: number,
+): InsightPoint {
+  if (points.length === 0) {
+    return { x: 0, y: 0 };
+  }
+
+  if (distance <= 0) {
+    const firstPoint = points[0]!;
+    return { x: firstPoint.x, y: firstPoint.y };
+  }
+
+  if (distance >= totalLength) {
+    const lastPoint = points[points.length - 1]!;
+    return { x: lastPoint.x, y: lastPoint.y };
+  }
+
+  for (let index = 1; index < points.length; index += 1) {
+    const currentPoint = points[index]!;
+    if (currentPoint.distance < distance) {
+      continue;
+    }
+
+    const previousPoint = points[index - 1]!;
+    const span = currentPoint.distance - previousPoint.distance || 1;
+    const ratio = (distance - previousPoint.distance) / span;
+    return {
+      x: previousPoint.x + (currentPoint.x - previousPoint.x) * ratio,
+      y: previousPoint.y + (currentPoint.y - previousPoint.y) * ratio,
+    };
+  }
+
+  const lastPoint = points[points.length - 1]!;
+  return { x: lastPoint.x, y: lastPoint.y };
+}
+
+function collectPathSegmentPoints(
+  points: SampledPathPoint[],
+  startDistance: number,
+  endDistance: number,
+  totalLength: number,
+): InsightPoint[] {
+  if (points.length === 0 || endDistance <= startDistance) {
+    return [];
+  }
+
+  const segmentPoints: InsightPoint[] = [
+    pointAtDistance(points, startDistance, totalLength),
+  ];
+
+  for (const point of points) {
+    if (point.distance <= startDistance || point.distance >= endDistance) {
+      continue;
+    }
+
+    segmentPoints.push({ x: point.x, y: point.y });
+  }
+
+  segmentPoints.push(pointAtDistance(points, endDistance, totalLength));
+  return segmentPoints;
+}
+
+function strokePolyline(
+  context: CanvasRenderingContext2D,
+  points: Array<InsightPoint | SampledPathPoint>,
+): void {
+  if (points.length < 2) {
+    return;
+  }
+
+  context.beginPath();
+  context.moveTo(points[0]!.x, points[0]!.y);
+  for (let index = 1; index < points.length; index += 1) {
+    context.lineTo(points[index]!.x, points[index]!.y);
+  }
+  context.stroke();
+}
+
+function configureCanvasContext(
+  canvas: HTMLCanvasElement | null,
+  width: number,
+  height: number,
+  dpr: number,
+): CanvasRenderingContext2D | null {
+  if (!canvas) {
+    return null;
+  }
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    return null;
+  }
+
+  const pixelWidth = Math.max(Math.round(width * dpr), 1);
+  const pixelHeight = Math.max(Math.round(height * dpr), 1);
+
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+  context.clearRect(0, 0, width, height);
+  return context;
+}
+
+function drawBaseEdges(
+  context: CanvasRenderingContext2D,
+  edges: SampledRootRelationEdge[],
+  dpr: number,
+): void {
+  context.save();
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  const wideStrokeBoost = dpr > 1.35 ? 1.6 : 1.9;
+
+  edges.forEach((edge) => {
+    const gradient = context.createLinearGradient(
+      edge.sourceX,
+      edge.sourceY,
+      edge.targetX,
+      edge.targetY,
+    );
+    gradient.addColorStop(0, hexToRgba(edge.sourceColor, 0.34 + edge.intensity * 0.16));
+    gradient.addColorStop(0.5, hexToRgba(edge.strokeColor, 0.24 + edge.intensity * 0.14));
+    gradient.addColorStop(1, hexToRgba(edge.targetColor, 0.34 + edge.intensity * 0.16));
+
+    context.save();
+    context.strokeStyle = gradient;
+    context.lineWidth = edge.strokeWidth + wideStrokeBoost;
+    context.globalAlpha = Math.min(0.18 + edge.intensity * 0.22, 0.46);
+    strokePolyline(context, edge.sampledPath);
+    context.restore();
+
+    context.save();
+    context.strokeStyle = gradient;
+    context.lineWidth = Math.max(edge.strokeWidth * 0.82, 1);
+    context.globalAlpha = Math.min(0.22 + edge.opacity * 0.52, 0.62);
+    strokePolyline(context, edge.sampledPath);
+    context.restore();
+  });
+
+  context.restore();
+}
+
+function drawAnimatedEdges(
+  context: CanvasRenderingContext2D,
+  edges: SampledRootRelationEdge[],
+  now: number,
+  dpr: number,
+): void {
+  context.save();
+  context.lineCap = "round";
+  context.lineJoin = "round";
+
+  edges.forEach((edge) => {
+    if (edge.pathLength <= 0) {
+      return;
+    }
+
+    const cycleProgress = ((now + edge.animationOffsetMs) % edge.cycleDurationMs) / edge.cycleDurationMs;
+    const headDistance = cycleProgress * edge.pathLength;
+    const leadDistance = headDistance - edge.highlightLength;
+    const segmentGroups = leadDistance >= 0
+      ? [collectPathSegmentPoints(edge.sampledPath, leadDistance, headDistance, edge.pathLength)]
+      : [
+          collectPathSegmentPoints(edge.sampledPath, edge.pathLength + leadDistance, edge.pathLength, edge.pathLength),
+          collectPathSegmentPoints(edge.sampledPath, 0, headDistance, edge.pathLength),
+        ];
+
+    for (const segmentPoints of segmentGroups) {
+      if (segmentPoints.length < 2) {
+        continue;
+      }
+
+      const startPoint = segmentPoints[0]!;
+      const endPoint = segmentPoints[segmentPoints.length - 1]!;
+      const gradient = context.createLinearGradient(startPoint.x, startPoint.y, endPoint.x, endPoint.y);
+      gradient.addColorStop(0, hexToRgba(edge.strokeColor, 0));
+      gradient.addColorStop(0.55, hexToRgba(edge.strokeColor, 0.56 + edge.intensity * 0.16));
+      gradient.addColorStop(1, "rgba(255, 255, 255, 0.96)");
+
+      context.save();
+      context.strokeStyle = gradient;
+      context.lineWidth = edge.strokeWidth + 1.8;
+      context.globalAlpha = 0.66;
+      context.shadowColor = hexToRgba(edge.strokeColor, 0.34 + edge.intensity * 0.16);
+      context.shadowBlur = 12 / Math.max(dpr * 0.75, 1);
+      strokePolyline(context, segmentPoints);
+      context.restore();
+
+      context.save();
+      context.strokeStyle = gradient;
+      context.lineWidth = Math.max(edge.strokeWidth * 0.95, 1.6);
+      context.globalAlpha = 0.98;
+      strokePolyline(context, segmentPoints);
+      context.restore();
+    }
+
+    const headPoint = pointAtDistance(edge.sampledPath, headDistance, edge.pathLength);
+    const radius = 4.4 + edge.intensity * 1.8;
+    const headGlow = context.createRadialGradient(
+      headPoint.x,
+      headPoint.y,
+      0,
+      headPoint.x,
+      headPoint.y,
+      radius * 2.4,
+    );
+    headGlow.addColorStop(0, "rgba(255, 255, 255, 0.96)");
+    headGlow.addColorStop(0.4, hexToRgba(edge.strokeColor, 0.86));
+    headGlow.addColorStop(1, hexToRgba(edge.strokeColor, 0));
+
+    context.save();
+    context.fillStyle = headGlow;
+    context.globalAlpha = Math.min(0.66 + edge.intensity * 0.16, 0.9);
+    context.beginPath();
+    context.arc(headPoint.x, headPoint.y, radius, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  });
+
+  context.restore();
 }
 
 function rootSpreadWidth(viewportWidth: number, compact: boolean, canvasGap: number): number {
@@ -437,8 +824,37 @@ function useElementWidth<T extends HTMLElement>(): [React.RefObject<T | null>, n
   return [ref, width];
 }
 
+function usePrefersReducedMotion(): boolean {
+  const getMatch = () =>
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia(REDUCED_MOTION_MEDIA_QUERY).matches;
+
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(getMatch);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const query = window.matchMedia(REDUCED_MOTION_MEDIA_QUERY);
+    const update = () => setPrefersReducedMotion(query.matches);
+    update();
+    if (typeof query.addEventListener === "function") {
+      query.addEventListener("change", update);
+      return () => query.removeEventListener("change", update);
+    }
+
+    query.addListener(update);
+    return () => query.removeListener(update);
+  }, []);
+
+  return prefersReducedMotion;
+}
+
 function InsightNodeButton({
   kind,
+  performanceMode,
   label,
   tooltip,
   subtitle,
@@ -455,9 +871,14 @@ function InsightNodeButton({
   draggable,
   dragging,
   onPointerDown,
+  onPointerEnter,
+  onPointerLeave,
+  onFocus,
+  onBlur,
   onClick,
 }: {
   kind: InsightRenderableKind;
+  performanceMode: InsightPerformanceMode;
   label: string;
   tooltip?: string;
   subtitle?: string;
@@ -474,6 +895,10 @@ function InsightNodeButton({
   draggable?: boolean;
   dragging?: boolean;
   onPointerDown?: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onPointerEnter?: () => void;
+  onPointerLeave?: () => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
   onClick: () => void;
 }) {
   const displayLabel = normalizeInlineText(label);
@@ -500,6 +925,10 @@ function InsightNodeButton({
     <button
       type="button"
       onPointerDown={onPointerDown}
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={onPointerLeave}
+      onFocus={onFocus}
+      onBlur={onBlur}
       onClick={onClick}
       className={cn(
         dragging
@@ -527,6 +956,7 @@ function InsightNodeButton({
       title={tooltipText || undefined}
       data-bubble-diameter={diameter}
       data-bubble-size={bubbleSizeTier(diameter)}
+      data-performance-mode={performanceMode}
       data-active={active ? "true" : "false"}
       data-dragging={dragging ? "true" : "false"}
     >
@@ -664,14 +1094,18 @@ function MemoryInsightCanvas({
   const [manualLanePositions, setManualLanePositions] = useState<Record<string, InsightPoint>>({});
   const [panMode, setPanMode] = useState(false);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+  const [hoveredRootCardId, setHoveredRootCardId] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const dragStateRef = useRef<DragState | null>(null);
   const panStateRef = useRef<PanState | null>(null);
   const suppressedClickNodeRef = useRef<string | null>(null);
   const shellRef = useRef<HTMLElement | null>(null);
+  const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fxCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const previousExpandedCardIdsRef = useRef<string[]>([]);
   const [viewportRef, viewportWidth] = useElementWidth<HTMLDivElement>();
+  const prefersReducedMotion = usePrefersReducedMotion();
 
   useEffect(() => {
     setExpandedCardIds([]);
@@ -682,6 +1116,7 @@ function MemoryInsightCanvas({
     setManualRootPositions({});
     setManualLanePositions({});
     setDraggingNodeId(null);
+    setHoveredRootCardId(null);
     dragStateRef.current = null;
     panStateRef.current = null;
   }, [resetToken]);
@@ -1289,6 +1724,145 @@ function MemoryInsightCanvas({
     });
   }, [canvasGap, expandedCardIds, laneAnchors.positions, viewportRef]);
 
+  const rawRootRelationEdges = useMemo(() => {
+    const rootCardsById = new Map(
+      poolCards.map((card) => [
+        `card:${card.category}`,
+        {
+          card,
+          color: bubbleToneColor(card.category),
+        },
+      ]),
+    );
+    const edges = buildRootBubbleRelationEdges({
+      cards: poolCards,
+      memories,
+      matchMap,
+    });
+
+    if (edges.length === 0) {
+      return [];
+    }
+
+    const maxStrength = edges[0]?.strength ?? 1;
+    return edges
+      .map((edge) => {
+        const sourceEntry = rootCardsById.get(edge.sourceId);
+        const targetEntry = rootCardsById.get(edge.targetId);
+        const sourcePosition = poolLayout.positions[edge.sourceId];
+        const targetPosition = poolLayout.positions[edge.targetId];
+        if (!sourceEntry || !targetEntry || !sourcePosition || !targetPosition) {
+          return null;
+        }
+
+        const sourceBubbleSize = nodeDimensions("card", sourceEntry.card.count, compact, maxCardCount);
+        const targetBubbleSize = nodeDimensions("card", targetEntry.card.count, compact, maxCardCount);
+        const sourceDiameter = bubbleDiameter(sourceEntry.card.count, maxCardCount, compact);
+        const targetDiameter = bubbleDiameter(targetEntry.card.count, maxCardCount, compact);
+        const intensity = Math.min(edge.strength / Math.max(maxStrength, 1), 1);
+        const sourceX = rootRegionOffsetX + sourcePosition.x + sourceBubbleSize.width / 2;
+        const sourceY = sourcePosition.y + sourceDiameter / 2;
+        const targetX = rootRegionOffsetX + targetPosition.x + targetBubbleSize.width / 2;
+        const targetY = targetPosition.y + targetDiameter / 2;
+        const dx = targetX - sourceX;
+        const dy = targetY - sourceY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const perpX = -dy / (dist || 1);
+        const perpY = dx / (dist || 1);
+        const curveOffset = Math.min(dist * 0.15, 40) * (hashString(edge.id) % 2 === 0 ? 1 : -1);
+        const controlX = (sourceX + targetX) / 2 + perpX * curveOffset;
+        const controlY = (sourceY + targetY) / 2 + perpY * curveOffset;
+        const sourceColor = sourceEntry.color;
+        const targetColor = targetEntry.color;
+
+        return {
+          ...edge,
+          sourceX,
+          sourceY,
+          controlX,
+          controlY,
+          targetX,
+          targetY,
+          intensity,
+          strokeWidth: 1 + intensity * 3.8,
+          opacity: 0.12 + intensity * 0.5,
+          sourceColor,
+          targetColor,
+          strokeColor: mixHexColors(sourceColor, targetColor),
+          dist,
+        } satisfies RootRelationRenderableEdge;
+      })
+      .filter((edge): edge is RootRelationRenderableEdge => edge !== null);
+  }, [compact, matchMap, maxCardCount, memories, poolCards, poolLayout.positions, rootRegionOffsetX]);
+
+  const sampledRootRelationEdges = useMemo<SampledRootRelationEdge[]>(
+    () =>
+      rawRootRelationEdges.map((edge) => {
+        const sampledPath = sampleBezierPath(edge);
+        return {
+          ...edge,
+          sampledPath: sampledPath.points,
+          pathLength: sampledPath.length,
+          highlightLength: getRootRelationHighlightLength(sampledPath.length),
+          cycleDurationMs:
+            ROOT_RELATION_CYCLE_DURATION_MS.min +
+            (1 - edge.intensity) * (ROOT_RELATION_CYCLE_DURATION_MS.max - ROOT_RELATION_CYCLE_DURATION_MS.min),
+          animationOffsetMs: hashString(edge.id) % ROOT_RELATION_CYCLE_DURATION_MS.max,
+        };
+      }),
+    [rawRootRelationEdges],
+  );
+
+  const rootPoolCardIds = useMemo(
+    () => new Set(poolCards.map((card) => card.id)),
+    [poolCards],
+  );
+  const animationBudget = useMemo(
+    () => getRootRelationAnimationBudget(sampledRootRelationEdges.length, prefersReducedMotion),
+    [prefersReducedMotion, sampledRootRelationEdges.length],
+  );
+  const effectiveCanvasDpr = useMemo(
+    () => getRootRelationEffectiveDpr(sampledRootRelationEdges.length),
+    [sampledRootRelationEdges.length],
+  );
+  const performanceMode: InsightPerformanceMode = prefersReducedMotion ? "reduced" : "full";
+  const isDraggingRootBubble = draggingNodeId ? rootPoolCardIds.has(draggingNodeId) : false;
+
+  useEffect(() => {
+    if (hoveredRootCardId && !rootPoolCardIds.has(hoveredRootCardId)) {
+      setHoveredRootCardId(null);
+    }
+  }, [hoveredRootCardId, rootPoolCardIds]);
+
+  const animatedRootRelationEdges = useMemo(() => {
+    if (animationBudget === 0 || isDraggingRootBubble) {
+      return [];
+    }
+
+    const prioritizedEdges = hoveredRootCardId
+      ? sampledRootRelationEdges.filter(
+          (edge) => edge.sourceId === hoveredRootCardId || edge.targetId === hoveredRootCardId,
+        )
+      : [];
+    const prioritizedEdgeIds = new Set(prioritizedEdges.map((edge) => edge.id));
+    const selectedEdges = prioritizedEdges.slice(0, animationBudget);
+
+    if (selectedEdges.length < animationBudget) {
+      selectedEdges.push(
+        ...sampledRootRelationEdges
+          .filter((edge) => !prioritizedEdgeIds.has(edge.id))
+          .slice(0, animationBudget - selectedEdges.length),
+      );
+    }
+
+    return selectedEdges;
+  }, [animationBudget, hoveredRootCardId, isDraggingRootBubble, sampledRootRelationEdges]);
+
+  const animatedRootRelationEdgeIds = useMemo(
+    () => animatedRootRelationEdges.map((edge) => edge.id).join(","),
+    [animatedRootRelationEdges],
+  );
+
   const canvasNodes = useMemo(() => {
     const positionedNodes: PositionedNode[] = [];
 
@@ -1308,7 +1882,9 @@ function MemoryInsightCanvas({
         diameter,
         bubbleColor: bubbleToneColor(card.category),
         draggable: true,
-        driftStyle: draggingNodeId === card.id ? undefined : createBubbleMotionStyle(card.id),
+        driftStyle: draggingNodeId === card.id || prefersReducedMotion
+          ? undefined
+          : createBubbleMotionStyle(card.id),
         position: {
           x: rootRegionOffsetX + localPosition.x,
           y: localPosition.y,
@@ -1420,6 +1996,7 @@ function MemoryInsightCanvas({
     poolCards,
     poolLayout.positions,
     rootRegionOffsetX,
+    prefersReducedMotion,
     t,
     tagColumnWidth,
   ]);
@@ -1444,52 +2021,55 @@ function MemoryInsightCanvas({
     [canvasNodes, laneAnchors.positions, laneHeights, laneWidth, poolLayout.height, rootRegionOffsetX, rootRegionWidth, safeViewportWidth, viewportMinHeight],
   );
 
-  const rootRelationEdges = useMemo(() => {
-    const edges = buildRootBubbleRelationEdges({
-      cards: poolCards,
-      memories,
-      matchMap,
-    });
-    if (edges.length === 0) {
-      return [];
+  useEffect(() => {
+    const context = configureCanvasContext(
+      baseCanvasRef.current,
+      canvasBounds.width,
+      canvasBounds.height,
+      effectiveCanvasDpr,
+    );
+    if (!context) {
+      return;
     }
 
-    const maxStrength = edges[0]?.strength ?? 1;
-    return edges
-      .map((edge) => {
-        const sourcePosition = poolLayout.positions[edge.sourceId];
-        const targetPosition = poolLayout.positions[edge.targetId];
-        if (!sourcePosition || !targetPosition) {
-          return null;
-        }
-        const sourceCard = poolCards.find((card) => `card:${card.category}` === edge.sourceId);
-        const targetCard = poolCards.find((card) => `card:${card.category}` === edge.targetId);
-        if (!sourceCard || !targetCard) {
-          return null;
-        }
-        const sourceBubbleSize = nodeDimensions("card", sourceCard.count, compact, maxCardCount);
-        const targetBubbleSize = nodeDimensions("card", targetCard.count, compact, maxCardCount);
-        const sourceDiameter = bubbleDiameter(sourceCard.count, maxCardCount, compact);
-        const targetDiameter = bubbleDiameter(targetCard.count, maxCardCount, compact);
-        const intensity = Math.min(edge.strength / Math.max(maxStrength, 1), 1);
-        const sourceX = rootRegionOffsetX + sourcePosition.x + sourceBubbleSize.width / 2;
-        const sourceY = sourcePosition.y + sourceDiameter / 2;
-        const targetX = rootRegionOffsetX + targetPosition.x + targetBubbleSize.width / 2;
-        const targetY = targetPosition.y + targetDiameter / 2;
+    drawBaseEdges(context, sampledRootRelationEdges, effectiveCanvasDpr);
+  }, [canvasBounds.height, canvasBounds.width, effectiveCanvasDpr, sampledRootRelationEdges]);
 
-        return {
-          ...edge,
-          sourceX,
-          sourceY,
-          targetX,
-          targetY,
-          intensity,
-          strokeWidth: 1 + intensity * 3.8,
-          opacity: 0.12 + intensity * 0.5,
-        };
-      })
-      .filter((edge): edge is NonNullable<typeof edge> => edge !== null);
-  }, [compact, matchMap, maxCardCount, memories, poolCards, poolLayout.positions, rootRegionOffsetX]);
+  useEffect(() => {
+    const canvas = fxCanvasRef.current;
+    const context = configureCanvasContext(
+      canvas,
+      canvasBounds.width,
+      canvasBounds.height,
+      effectiveCanvasDpr,
+    );
+    if (!canvas || !context) {
+      return;
+    }
+
+    if (animatedRootRelationEdges.length === 0) {
+      return;
+    }
+
+    let animationFrameId = 0;
+    const renderFrame = (now: number) => {
+      const frameContext = configureCanvasContext(
+        canvas,
+        canvasBounds.width,
+        canvasBounds.height,
+        effectiveCanvasDpr,
+      );
+      if (!frameContext) {
+        return;
+      }
+
+      drawAnimatedEdges(frameContext, animatedRootRelationEdges, now, effectiveCanvasDpr);
+      animationFrameId = window.requestAnimationFrame(renderFrame);
+    };
+
+    animationFrameId = window.requestAnimationFrame(renderFrame);
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [animatedRootRelationEdges, canvasBounds.height, canvasBounds.width, effectiveCanvasDpr]);
 
   const summaryParts = useMemo(() => {
     const parts = [t("memory_insight.summary_root", { count: graph.cards.length })];
@@ -1523,6 +2103,12 @@ function MemoryInsightCanvas({
         isFullscreen ? "h-screen rounded-none px-5 py-5 sm:px-8" : "",
       )}
       data-testid="memory-insight-overview"
+      data-performance-mode={performanceMode}
+      data-edge-layer="canvas"
+      data-animation-budget={animationBudget}
+      data-effective-dpr={effectiveCanvasDpr}
+      data-animated-edge-ids={animatedRootRelationEdgeIds}
+      data-highlighted-root={hoveredRootCardId ?? ""}
       style={{
         background:
           "radial-gradient(circle at top right, color-mix(in srgb, var(--facet-people) 12%, transparent) 0%, transparent 30%), radial-gradient(circle at 10% 20%, color-mix(in srgb, var(--type-insight) 16%, transparent) 0%, transparent 36%), linear-gradient(180deg, color-mix(in srgb, var(--card) 96%, transparent), color-mix(in srgb, var(--card) 92%, transparent))",
@@ -1620,114 +2206,23 @@ function MemoryInsightCanvas({
                 {t("memory_insight.canvas_hint")}
               </div>
 
-              {rootRelationEdges.length > 0 ? (
-                <svg
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 z-0"
-                  width={canvasBounds.width}
-                  height={canvasBounds.height}
-                  viewBox={`0 0 ${canvasBounds.width} ${canvasBounds.height}`}
-                  preserveAspectRatio="none"
-                >
-                  <defs>
-                    <filter id="synapse-glow" x="-50%" y="-50%" width="200%" height="200%">
-                      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur" />
-                      <feColorMatrix in="blur" type="saturate" values="2.4" result="saturated" />
-                      <feMerge>
-                        <feMergeNode in="saturated" />
-                        <feMergeNode in="SourceGraphic" />
-                      </feMerge>
-                    </filter>
-                    <filter id="synapse-glow-strong" x="-50%" y="-50%" width="200%" height="200%">
-                      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur" />
-                      <feColorMatrix in="blur" type="saturate" values="3" result="saturated" />
-                      <feMerge>
-                        <feMergeNode in="saturated" />
-                        <feMergeNode in="SourceGraphic" />
-                      </feMerge>
-                    </filter>
-                    {rootRelationEdges.map((edge) => {
-                      const sourceColor = poolCards.find((c) => `card:${c.category}` === edge.sourceId);
-                      const targetColor = poolCards.find((c) => `card:${c.category}` === edge.targetId);
-                      const sc = sourceColor ? bubbleToneColor(sourceColor.category) : "#6d8fa5";
-                      const tc = targetColor ? bubbleToneColor(targetColor.category) : "#6d8fa5";
-                      return (
-                        <linearGradient
-                          key={`grad-${edge.id}`}
-                          id={`synapse-grad-${edge.id.replace(/[^a-zA-Z0-9]/g, "_")}`}
-                          x1={edge.sourceX}
-                          y1={edge.sourceY}
-                          x2={edge.targetX}
-                          y2={edge.targetY}
-                          gradientUnits="userSpaceOnUse"
-                        >
-                          <stop offset="0%" stopColor={sc} stopOpacity={0.9} />
-                          <stop offset="50%" stopColor={`color-mix(in srgb, ${sc} 50%, ${tc})`} stopOpacity={0.6} />
-                          <stop offset="100%" stopColor={tc} stopOpacity={0.9} />
-                        </linearGradient>
-                      );
-                    })}
-                  </defs>
-                  {rootRelationEdges.map((edge) => {
-                    const dx = edge.targetX - edge.sourceX;
-                    const dy = edge.targetY - edge.sourceY;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
-                    const perpX = -dy / (dist || 1);
-                    const perpY = dx / (dist || 1);
-                    const curveOffset = Math.min(dist * 0.15, 40) * (hashString(edge.id) % 2 === 0 ? 1 : -1);
-                    const mx = (edge.sourceX + edge.targetX) / 2 + perpX * curveOffset;
-                    const my = (edge.sourceY + edge.targetY) / 2 + perpY * curveOffset;
-                    const pathD = `M ${edge.sourceX} ${edge.sourceY} Q ${mx} ${my} ${edge.targetX} ${edge.targetY}`;
-                    const gradId = `synapse-grad-${edge.id.replace(/[^a-zA-Z0-9]/g, "_")}`;
-                    const dashLen = Math.max(dist * 0.3, 20);
-                    const isStrong = edge.intensity > 0.5;
-
-                    return (
-                      <g key={edge.id}>
-                        <path
-                          d={pathD}
-                          fill="none"
-                          stroke={`url(#${gradId})`}
-                          strokeWidth={edge.strokeWidth + 4}
-                          strokeLinecap="round"
-                          opacity={edge.opacity * 0.35}
-                          filter={isStrong ? "url(#synapse-glow-strong)" : "url(#synapse-glow)"}
-                        />
-                        <path
-                          d={pathD}
-                          fill="none"
-                          stroke={`url(#${gradId})`}
-                          strokeWidth={edge.strokeWidth}
-                          strokeLinecap="round"
-                          opacity={edge.opacity}
-                        />
-                        <path
-                          d={pathD}
-                          fill="none"
-                          stroke="white"
-                          strokeWidth={Math.max(edge.strokeWidth * 0.6, 1)}
-                          strokeLinecap="round"
-                          strokeDasharray={`${dashLen} ${dist - dashLen}`}
-                          opacity={edge.opacity * 0.4}
-                          className="insight-synapse-flow"
-                          style={{
-                            "--synapse-dash-total": `${dist}`,
-                            "--synapse-flow-duration": `${(3 + (1 - edge.intensity) * 4).toFixed(1)}s`,
-                          } as CSSProperties}
-                        />
-                        {isStrong ? (
-                          <circle r="2.5" fill="white" opacity={0.7}>
-                            <animateMotion
-                              dur={`${(2.5 + (1 - edge.intensity) * 3).toFixed(1)}s`}
-                              repeatCount="indefinite"
-                              path={pathD}
-                            />
-                          </circle>
-                        ) : null}
-                      </g>
-                    );
-                  })}
-                </svg>
+              {sampledRootRelationEdges.length > 0 ? (
+                <>
+                  <canvas
+                    ref={baseCanvasRef}
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 z-0"
+                    style={{ width: canvasBounds.width, height: canvasBounds.height }}
+                    data-testid="memory-insight-base-canvas"
+                  />
+                  <canvas
+                    ref={fxCanvasRef}
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 z-[1]"
+                    style={{ width: canvasBounds.width, height: canvasBounds.height }}
+                    data-testid="memory-insight-fx-canvas"
+                  />
+                </>
               ) : null}
 
               {canvasNodes.map((node) => {
@@ -1738,6 +2233,7 @@ function MemoryInsightCanvas({
                   <InsightNodeButton
                     key={node.id}
                     kind={node.kind}
+                    performanceMode={performanceMode}
                     label={node.label}
                     tooltip={node.tooltip}
                     subtitle={node.subtitle}
@@ -1748,7 +2244,7 @@ function MemoryInsightCanvas({
                     diameter={node.diameter}
                     bubbleColor={node.bubbleColor}
                     driftStyle={isRootBubble && draggingNodeId !== node.id
-                      ? node.driftStyle ?? createBubbleMotionStyle(node.id)
+                      ? node.driftStyle
                       : undefined}
                     muted={node.muted}
                     draggable={node.draggable}
@@ -1760,6 +2256,14 @@ function MemoryInsightCanvas({
                       width: node.width,
                       height: node.height,
                     }}
+                    onPointerEnter={isRootBubble ? () => setHoveredRootCardId(node.id) : undefined}
+                    onPointerLeave={isRootBubble ? () => setHoveredRootCardId((current) => (
+                      current === node.id ? null : current
+                    )) : undefined}
+                    onFocus={isRootBubble ? () => setHoveredRootCardId(node.id) : undefined}
+                    onBlur={isRootBubble ? () => setHoveredRootCardId((current) => (
+                      current === node.id ? null : current
+                    )) : undefined}
                     onClick={() => guardedClick(node.id, node.onClick)}
                     onPointerDown={node.draggable
                       ? (event) => {
