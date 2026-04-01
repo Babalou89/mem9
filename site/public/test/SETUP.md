@@ -49,9 +49,7 @@ When this file is read, start with this structure:
   - selected branch: reconnect or create-new
   - expected restart count
   - local history will not be uploaded by this setup flow
-  - after approval, the gateway restart may interrupt the current chat
-  - the user should wait about 1-2 minutes, come back to the same conversation, and say `hi`
-  - setup is still in progress until the final mem9 handoff is sent
+  - `The gateway will restart automatically; please return to this chat in a few minutes and say hi.`
 - Approval phrases:
   - reconnect after the key is already captured: `approve reconnect`
   - create-new: `approve create`
@@ -69,10 +67,7 @@ If that looks good, reply exactly:
 
 approve reconnect
 
-After you approve, I will start the install/config/restart flow immediately.
-The gateway restart may pause this chat.
-Please wait about 1-2 minutes, come back to this same conversation, and say `hi`.
-Until I send the final mem9 handoff, setup is still in progress and not yet complete.
+The gateway will restart automatically; please return to this chat in a few minutes and say hi.
 ```
 
 Create-new uses the same structure but with `approve create`.
@@ -88,9 +83,7 @@ The dry-run preview must disclose:
 - reconnect path expects one restart after config is written and read back
 - create-new path expects one restart without `apiKey`, then a final restart after the generated key is written back
 - local history will not be uploaded by this setup flow
-- after approval, the gateway restart may interrupt the current chat
-- the user should wait about 1-2 minutes, come back to the same conversation, and say `hi`
-- setup is still in progress until the final mem9 handoff is sent
+- `The gateway will restart automatically; please return to this chat in a few minutes and say hi.`
 
 Install command:
 
@@ -107,11 +100,7 @@ Reconnect notice:
 ```text
 Approved. I’m starting mem9 reconnect now.
 
-I’m about to install the plugin if needed, write the mem9 config, and restart the OpenClaw gateway once.
-This will temporarily interrupt the current chat.
-Please wait about 1-2 minutes, then come back to this same conversation and say `hi`.
-When you return, I will continue verification automatically.
-Until I send the final mem9 handoff, reconnect is still in progress and not yet complete.
+The gateway will restart automatically; please return to this chat in a few minutes and say hi.
 ```
 
 Create-new notice:
@@ -119,12 +108,7 @@ Create-new notice:
 ```text
 Approved. I’m starting mem9 setup now.
 
-I’m about to install the plugin, write the mem9 config, and restart the OpenClaw gateway.
-This flow may need a second restart after the new mem9 API key is generated and saved.
-This will temporarily interrupt the current chat.
-Please wait about 1-2 minutes, then come back to this same conversation and say `hi`.
-When you return, I will continue verification automatically.
-Until I send the final mem9 handoff, setup is still in progress and not yet complete.
+The gateway will restart automatically; please return to this chat in a few minutes and say hi.
 ```
 
 ## Step 2 — Detect OpenClaw Version
@@ -269,14 +253,14 @@ If the auto-provision log never appears, stop and use `TROUBLESHOOTING.md`.
 
 - When the user returns after a restart and sends `hi` or another short message, resume verification automatically.
 - Do not ask `Want me to continue?`
-- The first resume reply must clearly say that verification is resuming after the gateway restart.
-- The first resume reply must say what is being checked now:
-  - plugin loaded successfully
-  - configured key is still the active key
-  - final success has not been declared yet
-- The first resume reply must also say whether the user needs to do anything right now. Default: no further action is needed while verification continues.
+- The first resume reply must be short and user-facing, for example: `Resuming mem9 verification after the gateway restart now. You do not need to do anything right now.`
+- Do not enumerate internal checklists, log lines, temporary status flips, or diagnostic reasoning in the resume reply.
+- Do not stream intermediate verification details to the user unless the flow is blocked or has failed.
 - Do not use vague wording like `mid-flight` or `system event` by itself.
-- If there was a real abnormal interruption beyond the normal restart, say exactly which stage is still incomplete and what the agent is resuming now.
+- If there was a real abnormal interruption beyond the normal restart, say only the minimum needed:
+  - setup is still verifying after the restart
+  - one issue remains
+  - the user does not need to do anything yet unless asked
 
 ## Step 5 — Verify
 
@@ -303,6 +287,9 @@ Create-new is successful only if all of the following are true:
 - Empty memory results are acceptable for a new mem9 space
 
 ## Step 6 — Required Final Handoff
+
+- Once success criteria are met, send the final handoff directly.
+- Do not append extra diagnostic commentary, transient restart notes, log summaries, or internal verification reasoning after the final handoff.
 
 ### Reconnect Final Handoff
 
