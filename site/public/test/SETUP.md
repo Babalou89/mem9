@@ -256,6 +256,10 @@ If the auto-provision log never appears, stop and use `TROUBLESHOOTING.md`.
 - The first resume reply must be short and user-facing, for example: `Resuming mem9 verification after the gateway restart now. You do not need to do anything right now.`
 - Do not enumerate internal checklists, log lines, temporary status flips, or diagnostic reasoning in the resume reply.
 - Do not stream intermediate verification details to the user unless the flow is blocked or has failed.
+- If the first post-restart host status briefly reports memory as unavailable, do one silent re-check before telling the user anything else.
+- That silent re-check must use the current config plus mem9-specific logs or activity to confirm whether the plugin is actually healthy.
+- If the silent re-check shows mem9 loaded successfully, reached the API, or resumed injecting memories, continue directly to the final handoff and do not mention the transient unavailable state.
+- Only surface a user-facing problem after the re-check still fails or the user must take action.
 - Do not use vague wording like `mid-flight` or `system event` by itself.
 - If there was a real abnormal interruption beyond the normal restart, say only the minimum needed:
   - setup is still verifying after the restart
@@ -273,6 +277,7 @@ Reconnect is successful only if all of the following are true:
 - OpenClaw loads the mem9 plugin without config or plugin errors
 - The first valid startup did not auto-provision a new key
 - The final active mem9 credential is still `USER_PROVIDED_MEM9_API_KEY`
+- A transient immediately-after-restart host status of `enabled (plugin mem9) · unavailable` is not failure by itself if the silent re-check succeeds without user action
 - Empty memory results are acceptable
 
 ### Create-New Success Criteria
