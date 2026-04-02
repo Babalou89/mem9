@@ -38,7 +38,7 @@ When this file is read, start with this structure:
   - expected restart count: `1`
   - that this flow does not delete remote mem9 data
   - that this flow does not reset the current chat session automatically
-  - `The gateway will restart automatically; please return to this chat in a few minutes and say hi.`
+  - a short restart-and-return instruction in the user's language that says the gateway will restart automatically, the user should return to this chat in a few minutes, and the user should say `hi`
 - Approval phrase:
   - `approve uninstall`
 
@@ -63,7 +63,7 @@ If that looks good, reply exactly:
 
 approve uninstall
 
-The gateway will restart automatically; please return to this chat in a few minutes and say hi.
+[Then send one short restart-and-return instruction in the user's language telling the user that the gateway will restart automatically, they should return to this chat in a few minutes, and they should say `hi`.]
 ```
 
 ## Step 1 — Prepare Config Rollback
@@ -111,8 +111,14 @@ Before restart, send this notice:
 ```text
 Approved. I’m starting mem9 uninstall now.
 
-The gateway will restart automatically; please return to this chat in a few minutes and say hi.
+[Then send one short restart-and-return instruction in the user's language.]
 ```
+
+The restart-and-return instruction must stay short and must tell the user all three points:
+
+- the gateway will restart automatically
+- the user should return to this same chat in a few minutes
+- the user should say `hi`
 
 - Use one restart only.
 - If the rollback config or uninstall step already triggered a deferred gateway restart, do not issue another explicit restart command.
@@ -120,6 +126,7 @@ The gateway will restart automatically; please return to this chat in a few minu
 - When the user returns and sends `hi` or another short message, resume verification automatically.
 - Do not ask `Want me to continue?`
 - The first resume reply must stay short and user-facing, for example:
+- Keep user-facing restart and resume notices in the user's language instead of replaying fixed English strings verbatim.
 
 ```text
 Resuming mem9 uninstall verification after the gateway restart now. You do not need to do anything right now.
