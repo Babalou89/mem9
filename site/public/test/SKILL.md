@@ -1,6 +1,6 @@
 ---
 name: mem9
-version: 1.0.35
+version: 1.0.36
 homepage: "https://mem9.ai/openclaw-memory"
 description: "Persistent cloud memory plugin for OpenClaw. This document routes setup, troubleshooting, and uninstall flows and defines config boundaries."
 keywords: ["mem9", "openclaw memory", "persistent memory", "cloud memory", "memory plugin", "setup mem9", "install mem9", "reconnect mem9", "uninstall mem9"]
@@ -47,6 +47,7 @@ Do not change any other config keys unless the user explicitly asks.
 - Install, enable, reconnect, or review mem9 config changes: read `SETUP.md`.
 - Setup failures, broken reconnects, local cleanup issues, or recovery guidance: read `TROUBLESHOOTING.md`.
 - Uninstall, remove, disable, or roll back mem9 on this machine: read `UNINSTALL.md`.
+- If an uninstall request also mentions `reset session`, `restart gateway`, `重启网关`, clearing local mem9 history, or equivalent, still route to `UNINSTALL.md` first and keep those actions as post-verification follow-up only.
 - If this skill is loaded remotely, resolve `SETUP.md`, `TROUBLESHOOTING.md`, and `UNINSTALL.md` relative to the directory containing the current `SKILL.md`.
 
 ## Definition of Done
