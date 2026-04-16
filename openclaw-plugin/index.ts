@@ -314,7 +314,15 @@ const mnemoPlugin = {
       api.logger.info("[mem9] tenantID is deprecated; treating it as apiKey for v1alpha2");
     }
     const registerTenant = async (agentName: string): Promise<string> => {
-      const backend = new ServerBackend(effectiveApiUrl, "", agentName, timeoutConfig);
+      const backend = new ServerBackend(
+        effectiveApiUrl,
+        "",
+        agentName,
+        {
+          timeouts: timeoutConfig,
+          provisionQueryParams: cfg.provisionQueryParams ?? {},
+        },
+      );
       const result = await backend.register();
       api.logger.info(
         `[mem9] *** Auto-provisioned apiKey=${result.id} *** Save this to your config as apiKey`
@@ -406,7 +414,9 @@ class LazyServerBackend implements MemoryBackend {
 
     this.resolving = this.apiKeyProvider().then((apiKey) =>
       Promise.resolve().then(() => {
-        this.resolved = new ServerBackend(this.apiUrl, apiKey, this.agentId, this.timeouts);
+        this.resolved = new ServerBackend(this.apiUrl, apiKey, this.agentId, {
+          timeouts: this.timeouts,
+        });
         return this.resolved;
       })
     ).catch((err) => {
