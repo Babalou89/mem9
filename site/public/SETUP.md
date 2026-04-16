@@ -96,6 +96,7 @@ The dry-run preview must disclose:
 - package name: `@mem9/mem9`
 - install may use a one-shot `NPM_CONFIG_REGISTRY=https://registry.npmmirror.com` override when the default npm registry is slow or unreachable
 - only mem9 plugin config keys will be changed
+- plugin install happens before any config write that points `plugins.slots.memory` at `mem9`
 - reconnect path expects one restart after config is written and read back
 - create-new path expects one restart without `apiKey`; after the restart, the first user message must trigger exactly one create-new provision through the normal plugin hook path
 - create-new path will also write one unique `provisionToken` before the first restart so repeated post-restart retries on this machine collapse to the same key
@@ -124,6 +125,8 @@ Decision rule:
 - If the official npm registry times out, but `npmmirror` is reachable, treat that as a China-optimized network path and use `https://registry.npmmirror.com`.
 - If both registries are reachable, but the official registry is materially slower, prefer `npmmirror`.
 - Do not run `npm config set registry ...` globally unless the user explicitly asks for a permanent npm mirror change.
+- Do not write `plugins.slots.memory = "mem9"`, `plugins.entries.mem9`, or `plugins.allow += "mem9"` before `openclaw plugins install @mem9/mem9` succeeds.
+- OpenClaw validates the configured slot plugin during reload. If config points `plugins.slots.memory` at `mem9` before the plugin exists locally, the config becomes invalid and install/reload can fall into an avoidable recovery path.
 
 Preflight failure rule:
 
@@ -132,6 +135,9 @@ Preflight failure rule:
 - In that case, stop before config edits or restart and use `TROUBLESHOOTING.md` from the same directory.
 - Do not improvise a new install branch after the dry-run.
 - A second approval is only acceptable if the original disclosed scope did not already cover local mem9 cleanup.
+- If the current `openclaw.json` is already invalid because `plugins.slots.memory = "mem9"` but the plugin is not installed yet, treat that as broken local mem9 wiring from an earlier failed setup attempt.
+- In that specific case, the original setup approval already covers a temporary rollback of only the disclosed mem9 wiring to the currently valid memory slot, then plugin install, then restoration of the approved mem9 config.
+- Do not ask for an extra `approve recovery install` for that specific missing-plugin recovery. It is part of the same setup scope.
 
 ### Required Post-Install Notice
 
@@ -149,6 +155,7 @@ The restart will take about 1 minute. After that, send me a message to confirm m
 - Do not rely on the final assistant reply as the first place this notice appears.
 - Do not stop after install and wait for another user message before Step 2 or Step 3.
 - If `openclaw plugins install @mem9/mem9` schedules a deferred gateway restart, finish OpenClaw version detection, mem9 config writes, and config read-back in that same approved turn before the deferred restart is allowed to fire.
+- If install succeeds, `plugins.slots.memory = "mem9"` must still not be written until Step 3 starts its single approved config update.
 - After the restart finishes, ask the user to wait about 1 minute and send a short message such as `hi`.
 
 ### Required Post-Approval Notice
@@ -199,10 +206,12 @@ Before writing `openclaw.json`:
 - Show the exact keys that will change
 - Preserve unrelated config keys
 - Use the approval already obtained in Step 0 unless the scope changed
+- Do not write any mem9 key before Step 1 install succeeds
 - If create-new is selected, include `plugins.entries.mem9.config.provisionToken` in the disclosed key list
 - If create-new is selected, read back `plugins.entries.mem9.config.provisionToken` before the first restart and require an exact match to `PROVISION_TOKEN`
 - If create-new started from a remote `SKILL.md` URL with `utm_*` params, include `plugins.entries.mem9.config.provisionQueryParams` in the disclosed key list
 - If create-new has `REMOTE_SKILL_UTM_PARAMS`, read back `plugins.entries.mem9.config.provisionQueryParams` before the first restart and require an exact key/value match
+- Apply the mem9 config in one contiguous update after install succeeds. Do not split it into a pre-install slot switch and a later config write.
 
 ### Reconnect Existing API Key
 

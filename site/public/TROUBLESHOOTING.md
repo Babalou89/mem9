@@ -21,6 +21,15 @@ Confirm these first:
 - Re-check that the mem9 package was installed successfully
 - Re-check that the config only edits the exact mem9 keys and does not corrupt unrelated JSON
 
+### Install Hit `plugin not found: mem9`
+
+- Treat this as setup ordering failure, not as an API-key problem
+- Re-check whether the flow wrote `plugins.slots.memory = "mem9"` before `openclaw plugins install @mem9/mem9` succeeded
+- Re-check whether `plugins.entries.mem9` or `plugins.allow += "mem9"` were also written before install success
+- If yes, fix the ordering bug in the setup flow: install first, then apply all disclosed mem9 config in one contiguous update
+- If the machine is already stuck in that invalid state, temporarily restore only the currently valid memory slot and remove only the premature mem9 wiring, then install the plugin, then re-apply the approved mem9 config
+- Do not require a fresh extra approval for that missing-plugin recovery when it is only undoing the same mem9 wiring disclosed in the original setup scope
+
 ### Create-New Flow Did Not Return A Key
 
 - Make sure the first restart happened with `plugins.entries.mem9.config.apiKey` absent
