@@ -10,12 +10,12 @@ CLAUDE_DIR="$HOME/.claude"
 
 # ── User-editable config ──────────────────────────────────────────────────────
 ETH_IFACE="enp2s0"          # ethernet interface (check: ip link show)
-ETH_IP="192.168.1.50/24"    # static IP for robot LAN
-ETH_GATEWAY="192.168.1.1"
+ETH_IP="10.0.2.2/24"        # static IP — babalou enp6s0 is 10.0.2.1
+ETH_GATEWAY=""               # no gateway on this LAN; babalou routes for us
 ETH_DNS="8.8.8.8,1.1.1.1"
 
 WIFI_IFACE="wlp3s0"         # WiFi interface (check: ip link show)
-WIFI_SSID=""                 # leave empty to skip WiFi config
+WIFI_SSID=""                 # set to route internet through WiFi instead of babalou
 WIFI_PASSWORD=""
 
 MEM9_API_URL="https://api.mem9.ai"
@@ -46,13 +46,21 @@ network:
     ${ETH_IFACE}:
       addresses:
         - ${ETH_IP}
-      routes:
-        - to: default
-          via: ${ETH_GATEWAY}
       nameservers:
         addresses: [${ETH_DNS}]
       dhcp4: false
 NETPLAN
+
+# Only add default route if a gateway is specified
+if [[ -n "$ETH_GATEWAY" ]]; then
+  python3 - <<PY
+import sys, re
+txt = open("$NETPLAN_FILE").read()
+insert = f"      routes:\\n        - to: default\\n          via: ${ETH_GATEWAY}\\n"
+txt = re.sub(r'(      nameservers:)', insert + r'\1', txt)
+open("$NETPLAN_FILE","w").write(txt)
+PY
+fi
 
 if [[ -n "$WIFI_SSID" ]]; then
   cat >> "$NETPLAN_FILE" <<NETPLAN_WIFI
